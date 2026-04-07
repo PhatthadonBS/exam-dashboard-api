@@ -2,8 +2,8 @@ import express from "express"; // 1: import express
 export const app = express();  // 2: define app is express
 import cors from "cors"
 import bodyParser from "body-parser";
-import { users } from "./controllers/ีusers.controller.js";
 import { authen } from "./controllers/authen.controller.js";
+import { users } from "./controllers/users.controller.js";
 
 // middleware
 app.use(cors({
