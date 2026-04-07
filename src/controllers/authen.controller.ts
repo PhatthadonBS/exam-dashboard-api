@@ -23,7 +23,7 @@ authen.post("/sign-in", async (req: Request, res: Response) => {
       return res.status(401).json({
         message: "อีเมลหรือรหัสผ่านไม่ถูกต้อง",
       });
-    }
+    } 
     // สร้าง JWT Token โดยใช้ข้อมูล payload และ secret key จาก environment variable 
     const token = jwt.sign(
         payload,
@@ -33,7 +33,9 @@ authen.post("/sign-in", async (req: Request, res: Response) => {
 
     // ส่ง Token กลับไปให้ Angular
     res.json({ payload, token });
-  } catch (error) {}
+  } catch (error) {
+    res.status(500).json({ message: "Internal server error" });
+  }
 });
 
 authen.post("/sign-up", async (req: Request, res: Response) => {

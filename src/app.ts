@@ -4,10 +4,11 @@ import cors from "cors"
 import bodyParser from "body-parser";
 import { authen } from "./controllers/authen.controller.js";
 import { users } from "./controllers/users.controller.js";
+import { students } from "./controllers/students.controller.js";
 
 // middleware
 app.use(cors({
-  origin: "http://localhost:5173",
+  origin: "http://localhost:4200",
   methods: ["GET","POST","PUT","DELETE"],
   allowedHeaders: ["Content-Type","Authorization"],
   credentials: true
@@ -19,8 +20,9 @@ app.use(bodyParser.json());
 // path
 app.use('/authen', authen)
 app.use("/users", users)
+app.use("/students", students)
 
 // root
 app.use("/", (req, res) => {   // 3: root path
-  res.send("Hello World!!!");
+  res.send("Exam Dashboard API is running");
 });
