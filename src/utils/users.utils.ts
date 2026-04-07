@@ -1,5 +1,5 @@
 import { PoolConnection } from "mysql2/promise";
-import { conn } from "../database/connect_db.js";
+import { conn } from "../config/connect_db.js";
 
 export async function getUsers(conn: PoolConnection) {
   try {

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { getUser } from "../utils/users.utils.js";
-import { conn } from "../database/connect_db.js";
+import { conn } from "../config/connect_db.js";
 
 export const authen = Router();
 
@@ -12,8 +12,8 @@ authen.post("/sign-in", async (req: Request, res: Response) => {
     const payload = {
         userId: user.id,
         role: user.role,
-    };
-  
+    }; 
+      
     // สร้าง JWT Token
     const token = jwt.sign(
         payload,
