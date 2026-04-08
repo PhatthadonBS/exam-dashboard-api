@@ -9,6 +9,7 @@ import { subjects } from "./controllers/subjects.controller.js";
 import { examRounds } from "./controllers/exam-rounds.controller.js";
 import { examCriteria } from "./controllers/exam-criteria.controller.js";
 import { students } from "./controllers/students.controller.js";
+import { dashboard } from "./controllers/dashboard.controller.js";
 
 // middleware
 app.use(cors({
@@ -35,7 +36,7 @@ app.use("/subjects", subjects)
 app.use("/exam-rounds", examRounds)
 app.use("/exam-criteria", examCriteria)
 app.use("/students", students)
-
+app.use("/dashboard", dashboard) 
 // root
 app.use("/", (req, res) => {   // 3: root path
   res.send("Exam Dashboard API is running");
