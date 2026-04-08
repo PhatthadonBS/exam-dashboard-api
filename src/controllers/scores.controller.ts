@@ -139,3 +139,93 @@ scores.get('/:round_id', async (req: Request, res: Response): Promise<void> => {
         connection.release();
     }
 });
+
+// ========================================================
+// 3. API ดึงสรุปผลแบบ Matrix (GET /scores/summary/:year)
+// ========================================================
+scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> => {
+    const year = req.params.year;
+    const connection = await conn.getConnection();
+
+    try {
+        // 1. ดึงรอบสอบทั้งหมดในปีนั้น
+        const [rounds] = await connection.query<any[]>(
+            `SELECT round_id, round_type FROM exam_rounds WHERE academic_year = ? ORDER BY round_type ASC`, [year]
+        );
+
+        if (rounds.length === 0) {
+             res.status(200).json({ success: true, data: [] });
+             return;
+        }
+
+        const roundIds = rounds.map(r => r.round_id);
+
+        // 2. ดึงเกณฑ์คะแนนผ่านของแต่ละวิชาในรอบนั้นๆ
+        const [criteria] = await connection.query<any[]>(
+            `SELECT round_id, subject_id, passing_score FROM exam_criteria WHERE round_id IN (?)`, [roundIds]
+        );
+
+        // 3. ดึงคะแนนสอบทั้งหมด
+        const [scoresData] = await connection.query<any[]>(`
+            SELECT s.std_code, es.round_id, es.subject_id, es.score
+            FROM exam_scores es
+            JOIN students s ON es.std_id = s.std_id
+            WHERE es.round_id IN (?)
+        `, [roundIds]);
+
+        // จัดกลุ่มเกณฑ์คะแนน (round_id -> subject_id -> passing_score)
+        const criteriaMap: any = {};
+        criteria.forEach(c => {
+            if (!criteriaMap[c.round_id]) criteriaMap[c.round_id] = {};
+            criteriaMap[c.round_id][c.subject_id] = Number(c.passing_score);
+        });
+
+        // จัดกลุ่มคะแนนนิสิต
+        const studentMap: any = {};
+        scoresData.forEach(row => {
+            if (!studentMap[row.std_code]) {
+                studentMap[row.std_code] = { id: row.std_code, year: Number(year), rounds: {} };
+            }
+            if (!studentMap[row.std_code].rounds[row.round_id]) {
+                studentMap[row.std_code].rounds[row.round_id] = { scores: {} };
+            }
+            studentMap[row.std_code].rounds[row.round_id].scores[row.subject_id] = Number(row.score);
+        });
+
+        // คำนวณ ผ่าน/ตกกี่วิชา
+        Object.values(studentMap).forEach((std: any) => {
+            const frontendRounds: any = {}; // เพื่อแปลง round_id เป็น round_type (1,2,3...)
+            
+            rounds.forEach(r => {
+                const roundData = std.rounds[r.round_id];
+                if (roundData) {
+                    let failCount = 0;
+                    let subjectCount = 0;
+                    const roundCriteria = criteriaMap[r.round_id] || {};
+                    
+                    Object.keys(roundCriteria).forEach(subId => {
+                        subjectCount++;
+                        const passScore = roundCriteria[subId];
+                        const actualScore = roundData.scores[subId] || 0;
+                        if (actualScore < passScore) failCount++;
+                    });
+
+                    if (failCount === 0 && subjectCount > 0) {
+                        frontendRounds[r.round_type] = { status: 'pass', detail: `ผ่านครบ ${subjectCount} วิชา` };
+                    } else {
+                        frontendRounds[r.round_type] = { status: 'fail', detail: `ตก ${failCount} วิชา` };
+                    }
+                }
+            });
+            std.rounds = frontendRounds; // เขียนทับด้วยฟอร์แมตที่หน้าบ้านต้องการ
+        });
+
+        res.status(200).json({ success: true, data: Object.values(studentMap) });
+
+    } catch (error) {
+        console.error("Error fetching matrix summary:", error);
+        res.status(500).json({ success: false, message: "Server Error", error });
+    } finally {
+        connection.release();
+    }
+});
