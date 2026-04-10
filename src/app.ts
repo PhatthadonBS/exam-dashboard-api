@@ -16,8 +16,7 @@ app.use(cors({
   // 📌 1. เปลี่ยนเป็น Array [] และเพิ่ม http://localhost:4200 (Angular)
   origin: [
     "http://localhost:4200", 
-    "http://localhost:5173", 
-    "http://localhost:3000"
+    "https://examscoredashboard-2e4df.web.app/login"
   ],
   // 📌 2. เพิ่ม PATCH เข้าไปด้วย เพราะตอนอัปเดตข้อมูลหรือเปลี่ยนสถานะเราใช้ PATCH
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
