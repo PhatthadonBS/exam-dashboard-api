@@ -7,6 +7,6 @@ dotenv.config();                   // 3: read data from .env file and save to pr
 const port = Number(process.env.PORT)
 const server = http.createServer(app); // 5: create server
 
-server.listen(port, () => { // 6: start server
-  console.log(`Server running on port http://localhost:${port}`);
+server.listen(port, "0.0.0.0",() => { // 6: start server
+  console.log(`Server running on port http://0.0.0.0:${port}`);
 });
