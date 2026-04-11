@@ -7,7 +7,6 @@ export const examRounds = Router();
 // 1. ดึงข้อมูลรอบการสอบทั้งหมด (GET /)
 // ===================================================
 examRounds.get("/", async (req: Request, res: Response): Promise<void> => {
-    const connection = await conn.getConnection();
     try {
         // 📌 ปรับ SQL ใหม่: ใช้ LEFT JOIN ไปนับจำนวนวิชาในเกณฑ์สอบ (exam_criteria) มาด้วย
         const sql = `
@@ -21,7 +20,7 @@ examRounds.get("/", async (req: Request, res: Response): Promise<void> => {
             GROUP BY er.round_id, er.academic_year, er.round_type
             ORDER BY er.academic_year DESC, er.round_type ASC
         `;
-        const [rows] = await connection.query<any[]>(sql);
+        const [rows] = await conn.query<any[]>(sql);
 
         res.status(200).json({ 
             success: true, 
@@ -30,8 +29,6 @@ examRounds.get("/", async (req: Request, res: Response): Promise<void> => {
     } catch (error) {
         console.error("Error fetching exam rounds:", error);
         res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการดึงข้อมูลรอบการสอบ", error });
-    } finally {
-        connection.release();
     }
 });
 // ===================================================
@@ -44,11 +41,9 @@ examRounds.post("/", async (req: Request, res: Response): Promise<void> => {
         res.status(400).json({ success: false, message: "กรุณาส่งข้อมูล ปีการศึกษา และ ชื่อรอบการสอบ ให้ครบถ้วน" });
         return;
     }
-
-    const connection = await conn.getConnection();
     try {
         const sql = `INSERT INTO exam_rounds (academic_year, round_type) VALUES (?, ?)`;
-        const [result] = await connection.query<any>(sql, [academic_year, round_type]);
+        const [result] = await conn.query<any>(sql, [academic_year, round_type]);
 
         res.status(201).json({ 
             success: true, 
@@ -58,8 +53,6 @@ examRounds.post("/", async (req: Request, res: Response): Promise<void> => {
     } catch (error) {
         console.error("Error creating exam round:", error);
         res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการสร้างรอบการสอบ", error });
-    } finally {
-        connection.release();
     }
 });
 
@@ -68,18 +61,17 @@ examRounds.post("/", async (req: Request, res: Response): Promise<void> => {
 // ===================================================
 examRounds.delete("/year/:year", async (req: Request, res: Response): Promise<void> => {
     const year = req.params.year;
-    const connection = await conn.getConnection();
 
     try {
         // ใช้ ON DELETE CASCADE ที่เราตั้งไว้ใน DB การลบรอบสอบ จะลบคะแนนของรอบนั้นไปด้วยอัตโนมัติ
         const sql = `DELETE FROM exam_rounds WHERE academic_year = ?`;
-        const [result] = await connection.query<any>(sql, [year]);
+        const [result] = await conn.query<any>(sql, [year]);
 
         if (result.affectedRows === 0) {
             res.status(404).json({ success: false, message: `ไม่พบข้อมูลปีการศึกษา ${year} ที่ต้องการลบ` });
             return;
         }
-
+ 
         res.status(200).json({ 
             success: true, 
             message: `ลบข้อมูลปีการศึกษา ${year} เรียบร้อยแล้ว` 
@@ -87,7 +79,5 @@ examRounds.delete("/year/:year", async (req: Request, res: Response): Promise<vo
     } catch (error) {
         console.error("Error deleting exam rounds:", error);
         res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการลบข้อมูล", error });
-    } finally {
-        connection.release();
     }
 });

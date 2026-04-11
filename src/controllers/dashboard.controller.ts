@@ -10,7 +10,8 @@ dashboard.get('/find-round', async (req: Request, res: Response): Promise<any> =
   const { year, type } = req.query;
 
   try {
-    let sql = `SELECT round_id FROM exam_rounds WHERE 1=1`;
+    // 🌟 กรองเอาเฉพาะรอบที่เปิดใช้งาน (round_status = 1)
+    let sql = `SELECT round_id FROM exam_rounds WHERE round_status = 1`;
     let params: any[] = [];
 
     if (year && year !== 'all') {
@@ -37,12 +38,30 @@ dashboard.get('/find-round', async (req: Request, res: Response): Promise<any> =
 });
 
 // =================================================================
+// 🌟 API ดึงปีการศึกษาทั้งหมดที่มีในระบบ (เพื่อเอาไปทำ Dropdown)
+// =================================================================
+dashboard.get('/academic-years', async (req: Request, res: Response): Promise<any> => {
+  try {
+    // 🌟 ดึงเฉพาะปีการศึกษาที่มีรอบที่เปิดใช้งานอยู่
+    const sql = `SELECT DISTINCT academic_year FROM exam_rounds WHERE round_status = 1 ORDER BY academic_year DESC`;
+    const [rows]: any = await conn.query(sql);
+    
+    const years = rows.map((r: any) => r.academic_year);
+    
+    return res.json({ years });
+  } catch (error) {
+    console.error("Fetch Academic Years Error:", error);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+// =================================================================
 // 🌟 2. /students/:round_id  (หน้ารายบุคคล)
 // =================================================================
 dashboard.get('/students/:round_id', async (req: Request, res: Response): Promise<any> => {
   const roundId = req.params.round_id;
   try {
-    // ใช้ Subquery (bs) ดึงคะแนนที่ดีที่สุด (MAX) ของเด็กแต่ละคน/แต่ละวิชา มาคิดคำนวณ
+    // 🌟 ใช้คะแนน MAX เพื่อให้คนที่สอบผ่านในรอบซ่อม (4, 5) ถือว่าผ่าน
     const sqlStudents = `
       SELECT 
         st.std_code AS id, 
@@ -61,7 +80,9 @@ dashboard.get('/students/:round_id', async (req: Request, res: Response): Promis
               MAX(c.passing_score) AS passing_score
           FROM exam_scores es
           JOIN exam_criteria c ON es.subject_id = c.subject_id AND es.round_id = c.round_id
-          WHERE FIND_IN_SET(es.round_id, ?) > 0
+          JOIN exam_rounds r ON es.round_id = r.round_id
+          -- 🌟 กรองเฉพาะรอบที่เปิดใช้งาน
+          WHERE r.round_status = 1 AND FIND_IN_SET(es.round_id, ?) > 0
           GROUP BY es.std_id, es.subject_id
       ) bs ON st.std_id = bs.std_id
       JOIN subjects s ON bs.subject_id = s.subject_id
@@ -81,7 +102,9 @@ dashboard.get('/students/:round_id', async (req: Request, res: Response): Promis
           SELECT es.std_id, es.subject_id, MAX(es.score) AS max_score, MAX(c.passing_score) AS passing_score
           FROM exam_scores es
           JOIN exam_criteria c ON es.subject_id = c.subject_id AND es.round_id = c.round_id
-          WHERE FIND_IN_SET(es.round_id, ?) > 0
+          JOIN exam_rounds r ON es.round_id = r.round_id
+          -- 🌟 กรองเฉพาะรอบที่เปิดใช้งาน
+          WHERE r.round_status = 1 AND FIND_IN_SET(es.round_id, ?) > 0
           GROUP BY es.std_id, es.subject_id
       ) bs
       JOIN subjects s ON bs.subject_id = s.subject_id
@@ -122,7 +145,9 @@ dashboard.get('/subjects/:round_id', async (req: Request, res: Response): Promis
           SELECT es.std_id, es.subject_id, MAX(es.score) AS max_score, MAX(c.full_score) AS full_score, MAX(c.passing_score) AS passing_score
           FROM exam_scores es
           JOIN exam_criteria c ON es.subject_id = c.subject_id AND es.round_id = c.round_id
-          WHERE FIND_IN_SET(es.round_id, ?) > 0
+          JOIN exam_rounds r ON es.round_id = r.round_id
+          -- 🌟 กรองเฉพาะรอบที่เปิดใช้งาน
+          WHERE r.round_status = 1 AND FIND_IN_SET(es.round_id, ?) > 0
           GROUP BY es.std_id, es.subject_id
       ) bs
       JOIN subjects s ON bs.subject_id = s.subject_id
@@ -169,7 +194,9 @@ dashboard.get('/:round_id', async (req: Request, res: Response): Promise<any> =>
           SELECT es.std_id, es.subject_id, MAX(es.score) AS max_score, MAX(c.full_score) AS full_score, MAX(c.passing_score) AS passing_score
           FROM exam_scores es
           JOIN exam_criteria c ON es.subject_id = c.subject_id AND es.round_id = c.round_id
-          WHERE FIND_IN_SET(es.round_id, ?) > 0
+          JOIN exam_rounds r ON es.round_id = r.round_id
+          -- 🌟 กรองเฉพาะรอบที่เปิดใช้งาน
+          WHERE r.round_status = 1 AND FIND_IN_SET(es.round_id, ?) > 0
           GROUP BY es.std_id, es.subject_id
       ) bs
       JOIN subjects s ON bs.subject_id = s.subject_id
@@ -186,7 +213,9 @@ dashboard.get('/:round_id', async (req: Request, res: Response): Promise<any> =>
           SELECT es.std_id, es.subject_id, MAX(es.score) AS max_score, MAX(c.full_score) AS full_score, MAX(c.passing_score) AS passing_score
           FROM exam_scores es
           JOIN exam_criteria c ON es.subject_id = c.subject_id AND es.round_id = c.round_id
-          WHERE FIND_IN_SET(es.round_id, ?) > 0
+          JOIN exam_rounds r ON es.round_id = r.round_id
+          -- 🌟 กรองเฉพาะรอบที่เปิดใช้งาน
+          WHERE r.round_status = 1 AND FIND_IN_SET(es.round_id, ?) > 0
           GROUP BY es.std_id, es.subject_id
       ) bs
       GROUP BY bs.std_id
@@ -240,6 +269,33 @@ dashboard.get('/:round_id', async (req: Request, res: Response): Promise<any> =>
     });
 
   } catch (error) {
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+// =================================================================
+// 🌟 API เช็คว่ารอบการสอบนี้มีข้อมูลผลคะแนนหรือไม่ (length > 0)
+// =================================================================
+dashboard.get('/check-results/:round_id', async (req: Request, res: Response): Promise<any> => {
+  const roundId = req.params.round_id;
+
+  try {
+    // ใช้ LIMIT 1 เพื่อลดภาระ Database ถ้าเจอแค่ 1 record ก็แปลว่ามีข้อมูลแล้ว
+    const sql = `
+      SELECT * 
+      FROM exam_scores 
+      WHERE FIND_IN_SET(round_id, ?) > 0 
+      LIMIT 1
+    `;
+    const [rows]: any = await conn.query(sql, [roundId]);
+
+    // ถ้า rows.length > 0 แปลว่ามีข้อมูลอย่างน้อย 1 แถว
+    const hasData = rows.length > 0;
+
+    return res.json({ hasData });
+
+  } catch (error) {
+    console.error("Check Results Error:", error);
     return res.status(500).json({ message: "Internal Server Error" });
   }
 });
