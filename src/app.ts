@@ -10,15 +10,14 @@ import { examRounds } from "./controllers/exam-rounds.controller.js";
 import { examCriteria } from "./controllers/exam-criteria.controller.js";
 import { students } from "./controllers/students.controller.js";
 import { dashboard } from "./controllers/dashboard.controller.js";
+import { verifyToken } from "./middlewares/authen.middleware.js";
 
 // middleware
 app.use(cors({
-  // 📌 1. เปลี่ยนเป็น Array [] และเพิ่ม http://localhost:4200 (Angular)
   origin: [
     "http://localhost:4200", 
-    "https://examscoredashboard-2e4df.web.app"
+    `${process.env.DOMAIN_NAME}`
   ],
-  // 📌 2. เพิ่ม PATCH เข้าไปด้วย เพราะตอนอัปเดตข้อมูลหรือเปลี่ยนสถานะเราใช้ PATCH
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
@@ -29,14 +28,14 @@ app.use(bodyParser.json());
 
 // path
 app.use('/authen', authen)
-app.use("/users", users)
-app.use("/scores", scores)
-app.use("/subjects", subjects)
-app.use("/exam-rounds", examRounds)
-app.use("/exam-criteria", examCriteria)
-app.use("/students", students)
-app.use("/dashboard", dashboard) 
+app.use("/users",verifyToken, users)
+app.use("/scores",verifyToken, scores)
+app.use("/subjects",verifyToken, subjects)
+app.use("/exam-rounds",verifyToken, examRounds)
+app.use("/exam-criteria",verifyToken, examCriteria)
+app.use("/students",verifyToken, students)
+app.use("/dashboard", verifyToken, dashboard) 
 // root
 app.use("/", (req, res) => {   // 3: root path
-  res.send("Exam Dashboard API is running");
+  res.redirect(`${process.env.DOMAIN_NAME}`)
 });

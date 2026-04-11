@@ -143,7 +143,7 @@ dashboard.get('/subjects/:round_id', async (req: Request, res: Response): Promis
         code: row.code, name: row.name, fullScore: Number(row.fullScore), passScore: Number(row.passScore),
         avg: Number(row.avg) || 0, sd: Number(row.sd) || 0, min: Number(row.min) || 0, max: Number(row.max) || 0,
         passRate: passRate, median: Number(median.toFixed(1))
-      };
+      }; 
     });
 
     return res.json({ subjectStats });
