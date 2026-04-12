@@ -24,7 +24,6 @@ dashboard.get('/find-round', async (req: Request, res: Response): Promise<any> =
     }
 
     const [rows]: any = await conn.query(sql, params);
-
     if (rows.length > 0) {
       const roundIds = rows.map((r: any) => r.round_id).join(',');
       return res.json({ roundId: roundIds }); 
@@ -284,15 +283,12 @@ dashboard.get('/check-results/:round_id', async (req: Request, res: Response): P
     const sql = `
       SELECT * 
       FROM exam_scores 
-      WHERE FIND_IN_SET(round_id, ?) > 0 
+      WHERE round_id = ? 
       LIMIT 1
     `;
     const [rows]: any = await conn.query(sql, [roundId]);
 
-    // ถ้า rows.length > 0 แปลว่ามีข้อมูลอย่างน้อย 1 แถว
-    const hasData = rows.length > 0;
-
-    return res.json({ hasData });
+    return res.json({ hasResults: rows.length });
 
   } catch (error) {
     console.error("Check Results Error:", error);
