@@ -34,7 +34,8 @@ authen.post("/sign-in", async (req: Request, res: Response) => {
     // ส่ง Token กลับไปให้ Angular
     res.json({ payload, token });
   } catch (error) {
-    res.status(500).json({ message: "Internal server error" });
+    console.log(error);
+    res.status(500).json({ error });
   }
 });
 
