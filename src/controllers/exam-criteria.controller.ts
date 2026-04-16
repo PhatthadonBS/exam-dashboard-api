@@ -11,7 +11,6 @@ examCriteria.get("/:round_id", async (req: Request, res: Response): Promise<void
     const connection = await conn.getConnection();
 
     try {
-        // ดึงเกณฑ์วิชา พร้อมเชื่อมตารางไปเอา "รหัสและชื่อวิชา" มาแสดงผล
         const sql = `
             SELECT 
                 s.subject_code AS code,
@@ -35,11 +34,11 @@ examCriteria.get("/:round_id", async (req: Request, res: Response): Promise<void
 });
 
 // ===================================================
-// 2. บันทึกเกณฑ์วิชา (POST /:round_id) - ✨ ท่าไม้ตายอยู่นี่!
+// 2. บันทึกเกณฑ์วิชา (POST /:round_id) 
 // ===================================================
 examCriteria.post("/:round_id", async (req: Request, res: Response): Promise<void> => {
     const round_id = req.params.round_id;
-    const { criteria } = req.body; // รับ Array รายวิชามาจากหน้าเว็บ
+    const { criteria } = req.body; 
 
     if (!criteria || !Array.isArray(criteria) || criteria.length === 0) {
         res.status(400).json({ success: false, message: "กรุณาส่งข้อมูลเกณฑ์วิชามาด้วย" });
@@ -49,16 +48,16 @@ examCriteria.post("/:round_id", async (req: Request, res: Response): Promise<voi
     const connection = await conn.getConnection();
 
     try {
-        await connection.beginTransaction(); // เริ่ม Transaction ป้องกันข้อมูลพัง
+        await connection.beginTransaction(); 
 
-        // ✨ 1. จัดการตารางรายวิชา (ถ้าวิชาไม่มีให้สร้างใหม่ ถ้ามีให้อัปเดตชื่อ)
-        const subjectValues = criteria.map(c => [c.code, c.name, 'active']);
+        // ✨ 1. จัดการตารางรายวิชา (แก้ 'active' เป็น 1 ให้ตรงกับ Database)
+        const subjectValues = criteria.map(c => [c.code, c.name, 1]); // 🌟 เปลี่ยนตรงนี้
         const upsertSubjectsSql = `
             INSERT INTO subjects (subject_code, subject_name, status) 
             VALUES ?
             ON DUPLICATE KEY UPDATE 
             subject_name = VALUES(subject_name),
-            status = 'active'
+            status = 1 -- 🌟 เปลี่ยนตรงนี้ด้วย
         `;
         await connection.query(upsertSubjectsSql, [subjectValues]);
 
@@ -73,14 +72,14 @@ examCriteria.post("/:round_id", async (req: Request, res: Response): Promise<voi
             return acc;
         }, {} as Record<string, number>);
 
-        // 🗑️ 3. ลบเกณฑ์สอบ "ของเก่า" ในรอบนี้ทิ้งให้หมด (เพื่อเตรียมเซฟอันใหม่ทับลงไป)
+        // 🗑️ 3. ลบเกณฑ์สอบ "ของเก่า" ในรอบนี้ทิ้งให้หมด 
         await connection.query(`DELETE FROM exam_criteria WHERE round_id = ?`, [round_id]);
 
         // 💾 4. บันทึกเกณฑ์สอบ "อันใหม่" ลงไป
         const criteriaValues = criteria.map(c => {
             const subject_id = subjectMap[c.code];
             return [c.fullScore, c.passScore, subject_id, round_id];
-        }).filter(val => val[2] !== undefined); // ป้องกันถ้าหา subject_id ไม่เจอ
+        }).filter(val => val[2] !== undefined); 
 
         if (criteriaValues.length > 0) {
             const insertCriteriaSql = `
@@ -90,11 +89,11 @@ examCriteria.post("/:round_id", async (req: Request, res: Response): Promise<voi
             await connection.query(insertCriteriaSql, [criteriaValues]);
         }
 
-        await connection.commit(); // บันทึกข้อมูลสำเร็จ!
+        await connection.commit(); 
         res.status(200).json({ success: true, message: "บันทึกเกณฑ์รายวิชาสำเร็จ!" });
         
     } catch (error) {
-        await connection.rollback(); // ถ้าพังให้ย้อนกลับทั้งหมด
+        await connection.rollback(); 
         console.error("Error saving criteria:", error);
         res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึกข้อมูล", error });
     } finally {
