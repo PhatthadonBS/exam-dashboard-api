@@ -3,17 +3,44 @@ import { conn } from "../config/connect_db.js";
 
 export const subjects = Router();
 
-// ดึงข้อมูลรายวิชาทั้งหมด พร้อมดึง "คะแนนเกณฑ์ล่าสุด" ที่เคยตั้งไว้มาด้วย
+// ดึงข้อมูลรายวิชาทั้งหมด พร้อมแยกคะแนนเก่า "ประมวลผล" กับ "ใบประกอบ" ออกจากกัน
 subjects.get("/", async (req: Request, res: Response) => {
     const connection = await conn.getConnection();
     try {
-        // 🌟 ใช้ Subquery ไปดึงคะแนนเต็ม (full_score) และคะแนนผ่าน (passing_score) ล่าสุดจาก exam_criteria
         const sql = `
             SELECT 
                 s.subject_code, 
                 s.subject_name,
-                COALESCE((SELECT full_score FROM exam_criteria ec WHERE ec.subject_id = s.subject_id ORDER BY criteria_id DESC LIMIT 1), 0) AS full_score,
-                COALESCE((SELECT passing_score FROM exam_criteria ec WHERE ec.subject_id = s.subject_id ORDER BY criteria_id DESC LIMIT 1), 0) AS passing_score
+                -- 🌟 ดึงคะแนนล่าสุดเฉพาะรอบ "ประมวลผลความรู้" (round_type <= 2)
+                COALESCE((
+                    SELECT ec.full_score FROM exam_criteria ec 
+                    JOIN exam_rounds er ON ec.round_id = er.round_id 
+                    WHERE ec.subject_id = s.subject_id AND er.round_type <= 2 AND ec.full_score > 0 
+                    ORDER BY ec.criteria_id DESC LIMIT 1
+                ), 0) AS pre_full_score,
+                
+                COALESCE((
+                    SELECT ec.passing_score FROM exam_criteria ec 
+                    JOIN exam_rounds er ON ec.round_id = er.round_id 
+                    WHERE ec.subject_id = s.subject_id AND er.round_type <= 2 AND ec.passing_score > 0 
+                    ORDER BY ec.criteria_id DESC LIMIT 1
+                ), 0) AS pre_passing_score,
+
+                -- 🌟 ดึงคะแนนล่าสุดเฉพาะรอบ "ใบประกอบวิชาชีพ" (round_type >= 3)
+                COALESCE((
+                    SELECT ec.full_score FROM exam_criteria ec 
+                    JOIN exam_rounds er ON ec.round_id = er.round_id 
+                    WHERE ec.subject_id = s.subject_id AND er.round_type >= 3 AND ec.full_score > 0 
+                    ORDER BY ec.criteria_id DESC LIMIT 1
+                ), 0) AS lic_full_score,
+                
+                COALESCE((
+                    SELECT ec.passing_score FROM exam_criteria ec 
+                    JOIN exam_rounds er ON ec.round_id = er.round_id 
+                    WHERE ec.subject_id = s.subject_id AND er.round_type >= 3 AND ec.passing_score > 0 
+                    ORDER BY ec.criteria_id DESC LIMIT 1
+                ), 0) AS lic_passing_score
+
             FROM subjects s 
             WHERE s.status = 1 
             ORDER BY s.subject_code ASC
