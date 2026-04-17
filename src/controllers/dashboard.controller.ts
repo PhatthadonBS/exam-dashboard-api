@@ -62,6 +62,9 @@ dashboard.get('/available-rounds', async (req: Request, res: Response): Promise<
 // =================================================================
 // 🌟 API ดึงข้อมูลสรุป "ใบประกอบวิชาชีพ" (แยกตามปี)
 // =================================================================
+// =================================================================
+// 🌟 API ดึงข้อมูลสรุป "ใบประกอบวิชาชีพ" (แยกตามปี)
+// =================================================================
 dashboard.get('/license-summary', async (req: Request, res: Response): Promise<any> => {
   try {
     const sql = `
@@ -71,7 +74,8 @@ dashboard.get('/license-summary', async (req: Request, res: Response): Promise<a
         SUM(CASE WHEN pr.paper_result = 2 THEN 1 ELSE 0 END) as fail_count
       FROM exam_rounds r
       JOIN exam_paper_result pr ON r.round_id = pr.round_id
-      WHERE r.round_type = 2 AND r.round_status = 1
+      -- 🌟 ไฮไลท์การแก้: เพิ่ม (r.round_type >= 3 OR r.round_type = 2) เพื่อให้ดึงข้อมูลทั้งของเก่าและของใหม่มาโชว์รวมกัน
+      WHERE (r.round_type >= 3 OR r.round_type = 2) AND r.round_status = 1
       GROUP BY r.academic_year
       ORDER BY r.academic_year ASC
     `;
