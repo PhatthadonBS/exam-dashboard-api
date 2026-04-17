@@ -4,13 +4,12 @@ import { conn } from "../config/connect_db.js";
 export const dashboard = Router();
 
 // =================================================================
-// 🌟 1. /find-round
+// 🌟 อัปเดต /find-round ให้รองรับ round_number (ครั้งที่)
 // =================================================================
 dashboard.get('/find-round', async (req: Request, res: Response): Promise<any> => {
-  const { year, type } = req.query;
+  const { year, type, round_number } = req.query; // เพิ่ม round_number
 
   try {
-    // 🌟 กรองเอาเฉพาะรอบที่เปิดใช้งาน (round_status = 1)
     let sql = `SELECT round_id FROM exam_rounds WHERE round_status = 1`;
     let params: any[] = [];
 
@@ -22,6 +21,10 @@ dashboard.get('/find-round', async (req: Request, res: Response): Promise<any> =
       sql += ` AND round_type = ?`;
       params.push(type);
     }
+    if (round_number && round_number !== 'all') {
+      sql += ` AND round_number = ?`;
+      params.push(round_number);
+    }
 
     const [rows]: any = await conn.query(sql, params);
     if (rows.length > 0) {
@@ -32,6 +35,50 @@ dashboard.get('/find-round', async (req: Request, res: Response): Promise<any> =
     }
   } catch (error) {
     console.error("Find Round Error:", error);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+// =================================================================
+// 🌟 API ดึง "ครั้งที่สอบ" ตามปีและประเภทการสอบ
+// =================================================================
+dashboard.get('/available-rounds', async (req: Request, res: Response): Promise<any> => {
+  const { year, type } = req.query;
+  try {
+    const sql = `
+      SELECT DISTINCT round_number 
+      FROM exam_rounds 
+      WHERE round_status = 1 AND academic_year = ? AND round_type = ? 
+      ORDER BY round_number ASC
+    `;
+    const [rows]: any = await conn.query(sql, [year, type]);
+    const rounds = rows.map((r: any) => r.round_number);
+    return res.json({ rounds });
+  } catch (error) {
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+// =================================================================
+// 🌟 API ดึงข้อมูลสรุป "ใบประกอบวิชาชีพ" (แยกตามปี)
+// =================================================================
+dashboard.get('/license-summary', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const sql = `
+      SELECT 
+        r.academic_year,
+        SUM(CASE WHEN pr.paper_result = 3 THEN 1 ELSE 0 END) as pass_count,
+        SUM(CASE WHEN pr.paper_result = 2 THEN 1 ELSE 0 END) as fail_count
+      FROM exam_rounds r
+      JOIN exam_paper_result pr ON r.round_id = pr.round_id
+      WHERE r.round_type = 2 AND r.round_status = 1
+      GROUP BY r.academic_year
+      ORDER BY r.academic_year ASC
+    `;
+    const [rows]: any = await conn.query(sql);
+    return res.json({ licenseData: rows });
+  } catch (error) {
+    console.error("License Summary Error:", error);
     return res.status(500).json({ message: "Internal Server Error" });
   }
 });
@@ -296,3 +343,43 @@ dashboard.get('/check-results/:round_id', async (req: Request, res: Response): P
   }
 });
 
+// =================================================================
+// 🌟 5. /student-history/:std_code (ดึงประวัติคะแนนแยกรายวิชาของเด็ก 1 คน)
+// =================================================================
+dashboard.get('/student-history/:std_code', async (req: Request, res: Response): Promise<any> => {
+  const stdCode = req.params.std_code;
+
+  try {
+    const sql = `
+      SELECT 
+        s.subject_code,
+        s.subject_name,
+        r.academic_year,
+        r.round_number,
+        r.round_type,
+        es.score,
+        c.full_score,
+        c.passing_score
+      FROM exam_scores es
+      JOIN subjects s ON es.subject_id = s.subject_id
+      JOIN exam_rounds r ON es.round_id = r.round_id
+      JOIN exam_criteria c ON es.subject_id = c.subject_id AND es.round_id = c.round_id
+      JOIN students st ON es.std_id = st.std_id
+      WHERE st.std_code = ? AND r.round_status = 1
+      ORDER BY s.subject_code ASC, r.academic_year ASC, r.round_number ASC
+    `;
+    
+    const [history]: any = await conn.query(sql, [stdCode]);
+    
+    // ถ้าไม่พบประวัติ
+    if (history.length === 0) {
+      return res.json({ history: [], message: "ไม่พบประวัติการสอบของนักศึกษาคนนี้" });
+    }
+
+    return res.json({ history });
+
+  } catch (error) {
+    console.error("Fetch Student History Error:", error);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+});
