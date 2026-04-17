@@ -3,14 +3,23 @@ import { conn } from "../config/connect_db.js";
 
 export const subjects = Router();
 
-// ดึงข้อมูลรายวิชาทั้งหมด
+// ดึงข้อมูลรายวิชาทั้งหมด พร้อมดึง "คะแนนเกณฑ์ล่าสุด" ที่เคยตั้งไว้มาด้วย
 subjects.get("/", async (req: Request, res: Response) => {
     const connection = await conn.getConnection();
     try {
-        // 🌟 ดึงเฉพาะวิชาที่ status = 1 (ใช้งานอยู่)
-        const [rows] = await connection.query(
-            `SELECT subject_code, subject_name FROM subjects WHERE status = 1 ORDER BY subject_code ASC`
-        );
+        // 🌟 ใช้ Subquery ไปดึงคะแนนเต็ม (full_score) และคะแนนผ่าน (passing_score) ล่าสุดจาก exam_criteria
+        const sql = `
+            SELECT 
+                s.subject_code, 
+                s.subject_name,
+                COALESCE((SELECT full_score FROM exam_criteria ec WHERE ec.subject_id = s.subject_id ORDER BY criteria_id DESC LIMIT 1), 0) AS full_score,
+                COALESCE((SELECT passing_score FROM exam_criteria ec WHERE ec.subject_id = s.subject_id ORDER BY criteria_id DESC LIMIT 1), 0) AS passing_score
+            FROM subjects s 
+            WHERE s.status = 1 
+            ORDER BY s.subject_code ASC
+        `;
+        
+        const [rows] = await connection.query(sql);
         res.status(200).json({ success: true, data: rows });
     } catch (error) {
         console.error("Error fetching subjects:", error);
