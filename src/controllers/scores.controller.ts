@@ -31,7 +31,7 @@ scores.post('/import', async (req: Request, res: Response): Promise<void> => {
             return acc;
         }, {} as Record<string, number>);
 
-        // 3. ดึงนักศึกษาที่มีอยู่แล้วมาทำ Map
+        // 3. ดึงนิสิตที่มีอยู่แล้วมาทำ Map
         const [students] = await connection.query<any[]>('SELECT std_id, std_code FROM students');
         const studentMap = students.reduce((acc, row) => {
             acc[row.std_code] = row.std_id;

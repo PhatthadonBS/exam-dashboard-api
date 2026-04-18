@@ -377,7 +377,7 @@ dashboard.get('/student-history/:std_code', async (req: Request, res: Response):
     
     // ถ้าไม่พบประวัติ
     if (history.length === 0) {
-      return res.json({ history: [], message: "ไม่พบประวัติการสอบของนักศึกษาคนนี้" });
+      return res.json({ history: [], message: "ไม่พบประวัติการสอบของนิสิตคนนี้" });
     }
 
     return res.json({ history });
