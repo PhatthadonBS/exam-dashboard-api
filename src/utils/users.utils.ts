@@ -21,7 +21,7 @@ export async function getUser(id: number | null, email: string | null) {
       params.push(id);
     }
     if (email !== null) {
-      sql += " AND email = ?";
+      sql += " AND email = BINARY ?";
       params.push(email);
     }
     const [users] = await conn.query<UserInfoDTO[]>(sql, params);
