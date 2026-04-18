@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    ports:
+      - "7070:7070"
+    environment:
+      - DB_USER=${DB_USER}
+      - DB_HOST=${DB_HOST}
+      - DB_DATABASE=${DB_DATABASE}
+      - DB_PASSWD=${DB_PASSWD}
+      - DB_PORT=${DB_PORT}
+      - JWT_SECRET=${JWT_SECRET}
+      - DOMAIN_NAME=${DOMAIN_NAME}
+      - PORT=${PORT}
