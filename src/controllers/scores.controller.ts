@@ -24,14 +24,14 @@ scores.post('/import', async (req: Request, res: Response): Promise<void> => {
         const roundType = roundInfo[0]?.round_type;
         const isLicense = roundType >= 3; // ถ้า >= 3 คือสอบใบประกอบวิชาชีพ
 
-        // 2. ดึงวิชามาทำ Map เพื่อแปลง Code เป็น ID
+        // 2. ดึงวิชามาทำ Map เพื่อแปลง Code เป็น ID (ใช้เฉพาะโหมดประมวลผล)
         const [subjects] = await connection.query<any[]>('SELECT subject_id, subject_code FROM subjects');
         const subjectMap = subjects.reduce((acc, row) => {
             acc[row.subject_code] = row.subject_id;
             return acc;
         }, {} as Record<string, number>);
 
-        // 3. ดึงนิสิตที่มีอยู่แล้วมาทำ Map
+        // 3. ดึงนักศึกษาที่มีอยู่แล้วมาทำ Map
         const [students] = await connection.query<any[]>('SELECT std_id, std_code FROM students');
         const studentMap = students.reduce((acc, row) => {
             acc[row.std_code] = row.std_id;
@@ -54,10 +54,10 @@ scores.post('/import', async (req: Request, res: Response): Promise<void> => {
 
             if (isLicense) {
                 // 🎓 โหมดใบประกอบวิชาชีพ (เก็บลง exam_paper_result)
-                // แปลงคะแนน 1 = 3 (Pass), 0 = 2 (Fail)
-                const passScore = student.subjects[0]?.score; 
+                // 🌟 รับค่าจาก license_result ที่หน้าเว็บเพิ่งส่งมาสดๆ ร้อนๆ
+                const passScore = student.license_result; 
                 if (passScore !== null && passScore !== undefined) {
-                    const paper_result = passScore === 1 ? 3 : 2; 
+                    const paper_result = passScore === 1 ? 3 : 2; // 1=ผ่าน(3), 0=ตก(2)
                     valuesToInsert.push([std_id, round_id, paper_result]);
                 }
             } else {
@@ -130,18 +130,10 @@ scores.get('/:round_id', async (req: Request, res: Response): Promise<void> => {
             `;
             const [rows] = await connection.query<any[]>(sql, [round_id]);
 
-            // ไปดึงรหัสวิชาของรอบนี้ เพื่อส่งให้หน้าบ้านโชว์ถูกช่อง
-            const [crit] = await connection.query<any[]>(`
-                SELECT su.subject_code FROM exam_criteria ec 
-                JOIN subjects su ON ec.subject_id = su.subject_id 
-                WHERE ec.round_id = ? LIMIT 1
-            `, [round_id]);
-            const subject_code = crit[0]?.subject_code || 'LICENSE';
-
-            // ส่งข้อมูลกลับไปแบบเนียนๆ (แปลง 3 เป็น 1(ผ่าน), 2 เป็น 0(ตก))
+            // 🌟 ส่ง paper_result กลับไปตรงๆ โดยแปลง 3(ผ่าน) เป็น 1 และ 2(ตก) เป็น 0 ให้หน้าเว็บแสดงผล
             const result = rows.map(r => ({
                 std_code: r.std_code,
-                scores: { [subject_code]: r.paper_result === 3 ? 1 : 0 }
+                paper_result: r.paper_result === 3 ? 1 : 0 
             }));
             
             res.status(200).json({ success: true, data: result });
@@ -257,7 +249,7 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
             });
         }
 
-        // 🎓 3. ดึงข้อมูลสอบ "ใบประกอบวิชาชีพ" (จากตาราง exam_paper_result 🌟 ของใหม่)
+        // 🎓 3. ดึงข้อมูลสอบ "ใบประกอบวิชาชีพ" (จากตาราง exam_paper_result)
         if (licRoundIds.length > 0) {
             const [licData] = await connection.query<any[]>(`
                 SELECT s.std_code, epr.round_id, epr.paper_result
