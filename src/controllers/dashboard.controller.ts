@@ -6,80 +6,112 @@ export const dashboard = Router();
 // =================================================================
 // 🌟 อัปเดต /find-round ให้รองรับ round_number (ครั้งที่)
 // =================================================================
-dashboard.get('/find-round', async (req: Request, res: Response): Promise<any> => {
-  const { year, type, round_number } = req.query; // เพิ่ม round_number
+dashboard.get(
+  "/find-round",
+  async (req: Request, res: Response): Promise<any> => {
+    const { year, type, round_number } = req.query; // เพิ่ม round_number
 
-  try {
-    let sql = `SELECT round_id FROM exam_rounds WHERE round_status = 1`;
-    let params: any[] = [];
+    try {
+      let sql = `SELECT round_id FROM exam_rounds WHERE round_status = 1`;
+      let params: any[] = [];
 
-    if (year && year !== 'all') {
-      sql += ` AND academic_year = ?`;
-      params.push(year);
-    }
-    if (type && type !== 'all') {
-      sql += ` AND round_type = ?`;
-      params.push(type);
-    }
-    if (round_number && round_number !== 'all') {
-      sql += ` AND round_number = ?`;
-      params.push(round_number);
-    }
+      if (year && year !== "all") {
+        sql += ` AND academic_year = ?`;
+        params.push(year);
+      }
+      if (type && type !== "all") {
+        sql += ` AND round_type = ?`;
+        params.push(type);
+      }
+      if (round_number && round_number !== "all") {
+        sql += ` AND round_number = ?`;
+        params.push(round_number);
+      }
 
-    const [rows]: any = await conn.query(sql, params);
-    if (rows.length > 0) {
-      const roundIds = rows.map((r: any) => r.round_id).join(',');
-      return res.json({ roundId: roundIds }); 
-    } else {
-      return res.json({ roundId: null, message: "ไม่พบข้อมูลรอบการสอบนี้" });
+      const [rows]: any = await conn.query(sql, params);
+      if (rows.length > 0) {
+        const roundIds = rows.map((r: any) => r.round_id).join(",");
+        return res.json({ roundId: roundIds });
+      } else {
+        return res.json({ roundId: null, message: "ไม่พบข้อมูลรอบการสอบนี้" });
+      }
+    } catch (error) {
+      console.error("Find Round Error:", error);
+      return res.status(500).json({ message: "Internal Server Error" });
     }
-  } catch (error) {
-    console.error("Find Round Error:", error);
-    return res.status(500).json({ message: "Internal Server Error" });
-  }
-});
+  },
+);
 
 // =================================================================
 // 🌟 API ดึง "ครั้งที่สอบ" ตามปีและประเภทการสอบ
 // =================================================================
-dashboard.get('/available-rounds', async (req: Request, res: Response): Promise<any> => {
-  const { year, type } = req.query;
-  try {
-    const sql = `
+dashboard.get(
+  "/available-rounds",
+  async (req: Request, res: Response): Promise<any> => {
+    const { year, type } = req.query;
+    try {
+      const sql = `
       SELECT DISTINCT round_number 
       FROM exam_rounds 
       WHERE round_status = 1 AND academic_year = ? AND round_type = ? 
       ORDER BY round_number ASC
     `;
-    const [rows]: any = await conn.query(sql, [year, type]);
-    const rounds = rows.map((r: any) => r.round_number);
-    return res.json({ rounds });
-  } catch (error) {
-    return res.status(500).json({ message: "Internal Server Error" });
-  }
-});
+      const [rows]: any = await conn.query(sql, [year, type]);
+      const rounds = rows.map((r: any) => r.round_number);
+      return res.json({ rounds });
+    } catch (error) {
+      return res.status(500).json({ message: "Internal Server Error" });
+    }
+  },
+);
 
 // =================================================================
 // 🌟 API ดึงข้อมูลสรุป "ใบประกอบวิชาชีพ" (แยกตามปี)
 // =================================================================
-// =================================================================
-// 🌟 API ดึงข้อมูลสรุป "ใบประกอบวิชาชีพ" (แยกตามปี)
-// =================================================================
 dashboard.get('/license-summary', async (req: Request, res: Response): Promise<any> => {
+  const { start, end } = req.query;
+
   try {
+    let whereClause = ``; 
+    let params: any[] = [];
+
+    if (start && end) {
+      whereClause = ` AND r.academic_year BETWEEN ? AND ?`;
+      params.push(start, end);
+    }
+
+    // 🌟 นำ SQL ตัวเต็มมาใส่แทนที่ของเดิม
     const sql = `
       SELECT 
-        r.academic_year,
-        SUM(CASE WHEN pr.paper_result = 3 THEN 1 ELSE 0 END) as pass_count,
-        SUM(CASE WHEN pr.paper_result = 2 THEN 1 ELSE 0 END) as fail_count
-      FROM exam_rounds r
-      JOIN exam_paper_result pr ON r.round_id = pr.round_id
-      -- 🌟 ไฮไลท์การแก้: เพิ่ม (r.round_type >= 3 OR r.round_type = 2) เพื่อให้ดึงข้อมูลทั้งของเก่าและของใหม่มาโชว์รวมกัน
-      WHERE (r.round_type >= 3 OR r.round_type = 2) AND r.round_status = 1
-      GROUP BY r.academic_year
-      ORDER BY r.academic_year ASC
+          student_stats.academic_year,
+          SUM(CASE WHEN student_stats.failed_subjects_count = 0 THEN 1 ELSE 0 END) AS pass_count,
+          SUM(CASE WHEN student_stats.failed_subjects_count > 0 THEN 1 ELSE 0 END) AS fail_count
+      FROM (
+          SELECT 
+              bs.academic_year,
+              bs.std_id,
+              SUM(CASE WHEN bs.max_score < bs.passing_score THEN 1 ELSE 0 END) AS failed_subjects_count
+          FROM (
+              SELECT 
+                  es.std_id, 
+                  es.subject_id, 
+                  r.academic_year, 
+                  MAX(es.score) AS max_score, 
+                  MAX(c.passing_score) AS passing_score
+              FROM exam_scores es
+              JOIN exam_criteria c ON es.subject_id = c.subject_id AND es.round_id = c.round_id
+              JOIN exam_rounds r ON es.round_id = r.round_id
+              WHERE r.round_status = 1 AND r.round_type IN (3, 4, 5)
+              ${whereClause}
+              GROUP BY es.std_id, es.subject_id, r.academic_year
+          ) bs
+          GROUP BY bs.academic_year, bs.std_id
+      ) student_stats
+      GROUP BY student_stats.academic_year
+      ORDER BY student_stats.academic_year ASC
     `;
-    const [rows]: any = await conn.query(sql);
+
+    const [rows]: any = await conn.query(sql, params);
     return res.json({ licenseData: rows });
   } catch (error) {
     console.error("License Summary Error:", error);
@@ -90,29 +122,34 @@ dashboard.get('/license-summary', async (req: Request, res: Response): Promise<a
 // =================================================================
 // 🌟 API ดึงปีการศึกษาทั้งหมดที่มีในระบบ (เพื่อเอาไปทำ Dropdown)
 // =================================================================
-dashboard.get('/academic-years', async (req: Request, res: Response): Promise<any> => {
-  try {
-    // 🌟 ดึงเฉพาะปีการศึกษาที่มีรอบที่เปิดใช้งานอยู่
-    const sql = `SELECT DISTINCT academic_year FROM exam_rounds WHERE round_status = 1 ORDER BY academic_year DESC`;
-    const [rows]: any = await conn.query(sql);
-    
-    const years = rows.map((r: any) => r.academic_year);
-    
-    return res.json({ years });
-  } catch (error) {
-    console.error("Fetch Academic Years Error:", error);
-    return res.status(500).json({ message: "Internal Server Error" });
-  }
-});
+dashboard.get(
+  "/academic-years",
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      // 🌟 ดึงเฉพาะปีการศึกษาที่มีรอบที่เปิดใช้งานอยู่
+      const sql = `SELECT DISTINCT academic_year FROM exam_rounds WHERE round_status = 1 ORDER BY academic_year DESC`;
+      const [rows]: any = await conn.query(sql);
+
+      const years = rows.map((r: any) => r.academic_year);
+
+      return res.json({ years });
+    } catch (error) {
+      console.error("Fetch Academic Years Error:", error);
+      return res.status(500).json({ message: "Internal Server Error" });
+    }
+  },
+);
 
 // =================================================================
 // 🌟 2. /students/:round_id  (หน้ารายบุคคล)
 // =================================================================
-dashboard.get('/students/:round_id', async (req: Request, res: Response): Promise<any> => {
-  const roundId = req.params.round_id;
-  try {
-    // 🌟 ใช้คะแนน MAX เพื่อให้คนที่สอบผ่านในรอบซ่อม (4, 5) ถือว่าผ่าน
-    const sqlStudents = `
+dashboard.get(
+  "/students/:round_id",
+  async (req: Request, res: Response): Promise<any> => {
+    const roundId = req.params.round_id;
+    try {
+      // 🌟 ใช้คะแนน MAX เพื่อให้คนที่สอบผ่านในรอบซ่อม (4, 5) ถือว่าผ่าน
+      const sqlStudents = `
       SELECT 
         st.std_code AS id, 
         SUM(bs.max_score) AS total, 
@@ -138,13 +175,16 @@ dashboard.get('/students/:round_id', async (req: Request, res: Response): Promis
       JOIN subjects s ON bs.subject_id = s.subject_id
       GROUP BY st.std_id, st.std_code
     `;
-    const [studentsRaw]: any = await conn.query(sqlStudents, [roundId]);
-    const studentsList = studentsRaw.map((std: any) => ({
-      ...std, percent: Number(std.percent), total: Number(std.total), max: Number(std.max),
-      scoresArray: std.scoresStr ? std.scoresStr.split(',').map(Number) : []
-    }));
+      const [studentsRaw]: any = await conn.query(sqlStudents, [roundId]);
+      const studentsList = studentsRaw.map((std: any) => ({
+        ...std,
+        percent: Number(std.percent),
+        total: Number(std.total),
+        max: Number(std.max),
+        scoresArray: std.scoresStr ? std.scoresStr.split(",").map(Number) : [],
+      }));
 
-    const sqlSubjects = `
+      const sqlSubjects = `
       SELECT 
         s.subject_code AS code, s.subject_name AS name,
         ROUND(AVG(bs.max_score), 2) AS avg_score, MAX(bs.passing_score) AS pass_criteria
@@ -161,28 +201,31 @@ dashboard.get('/students/:round_id', async (req: Request, res: Response): Promis
       GROUP BY s.subject_id
       ORDER BY s.subject_code ASC
     `;
-    const [subjectsRaw]: any = await conn.query(sqlSubjects, [roundId]);
+      const [subjectsRaw]: any = await conn.query(sqlSubjects, [roundId]);
 
-    return res.json({
-      studentsList,
-      radarBase: {
-        labels: subjectsRaw.map((s: any) => `${s.code} ${s.name}`),
-        groupAvg: subjectsRaw.map((s: any) => Number(s.avg_score)),
-        criteria: subjectsRaw.map((s: any) => Number(s.pass_criteria))
-      }
-    });
-  } catch (error) {
-    return res.status(500).json({ message: "Internal Server Error" });
-  }
-});
+      return res.json({
+        studentsList,
+        radarBase: {
+          labels: subjectsRaw.map((s: any) => `${s.code} ${s.name}`),
+          groupAvg: subjectsRaw.map((s: any) => Number(s.avg_score)),
+          criteria: subjectsRaw.map((s: any) => Number(s.pass_criteria)),
+        },
+      });
+    } catch (error) {
+      return res.status(500).json({ message: "Internal Server Error" });
+    }
+  },
+);
 
 // =================================================================
 // 🌟 3. /subjects/:round_id (หน้าข้อมูลรายวิชา)
 // =================================================================
-dashboard.get('/subjects/:round_id', async (req: Request, res: Response): Promise<any> => {
-  const roundId = req.params.round_id;
-  try {
-    const sql = `
+dashboard.get(
+  "/subjects/:round_id",
+  async (req: Request, res: Response): Promise<any> => {
+    const roundId = req.params.round_id;
+    try {
+      const sql = `
       SELECT 
         s.subject_code AS code, s.subject_name AS name,
         MAX(bs.full_score) AS fullScore, MAX(bs.passing_score) AS passScore,
@@ -204,36 +247,55 @@ dashboard.get('/subjects/:round_id', async (req: Request, res: Response): Promis
       GROUP BY s.subject_id
       ORDER BY s.subject_code ASC
     `;
-    const [rawStats]: any = await conn.query(sql, [roundId]);
+      const [rawStats]: any = await conn.query(sql, [roundId]);
 
-    const subjectStats = rawStats.map((row: any) => {
-      const passRate = row.totalCount > 0 ? Math.round((row.passCount / row.totalCount) * 100) : 0;
-      let median = 0;
-      if (row.all_scores) {
-        const scores = row.all_scores.split(',').map(Number).sort((a: number, b: number) => a - b);
-        const mid = Math.floor(scores.length / 2);
-        median = scores.length % 2 !== 0 ? scores[mid] : (scores[mid - 1] + scores[mid]) / 2;
-      }
-      return {
-        code: row.code, name: row.name, fullScore: Number(row.fullScore), passScore: Number(row.passScore),
-        avg: Number(row.avg) || 0, sd: Number(row.sd) || 0, min: Number(row.min) || 0, max: Number(row.max) || 0,
-        passRate: passRate, median: Number(median.toFixed(1))
-      }; 
-    });
+      const subjectStats = rawStats.map((row: any) => {
+        const passRate =
+          row.totalCount > 0
+            ? Math.round((row.passCount / row.totalCount) * 100)
+            : 0;
+        let median = 0;
+        if (row.all_scores) {
+          const scores = row.all_scores
+            .split(",")
+            .map(Number)
+            .sort((a: number, b: number) => a - b);
+          const mid = Math.floor(scores.length / 2);
+          median =
+            scores.length % 2 !== 0
+              ? scores[mid]
+              : (scores[mid - 1] + scores[mid]) / 2;
+        }
+        return {
+          code: row.code,
+          name: row.name,
+          fullScore: Number(row.fullScore),
+          passScore: Number(row.passScore),
+          avg: Number(row.avg) || 0,
+          sd: Number(row.sd) || 0,
+          min: Number(row.min) || 0,
+          max: Number(row.max) || 0,
+          passRate: passRate,
+          median: Number(median.toFixed(1)),
+        };
+      });
 
-    return res.json({ subjectStats });
-  } catch (error) {
-    return res.status(500).json({ message: "Internal Server Error" });
-  }
-});
+      return res.json({ subjectStats });
+    } catch (error) {
+      return res.status(500).json({ message: "Internal Server Error" });
+    }
+  },
+);
 
 // =================================================================
 // 🌟 4. /:round_id (หน้าภาพรวม Overview)
 // =================================================================
-dashboard.get('/:round_id', async (req: Request, res: Response): Promise<any> => {
-  const roundId = req.params.round_id;
-  try {
-    const sqlSubjects = `
+dashboard.get(
+  "/:round_id",
+  async (req: Request, res: Response): Promise<any> => {
+    const roundId = req.params.round_id;
+    try {
+      const sqlSubjects = `
       SELECT 
         s.subject_code AS code, s.subject_name AS name,
         MAX(bs.full_score) AS full, MAX(bs.passing_score) AS passCriteria,
@@ -252,9 +314,9 @@ dashboard.get('/:round_id', async (req: Request, res: Response): Promise<any> =>
       JOIN subjects s ON bs.subject_id = s.subject_id
       GROUP BY s.subject_id
     `;
-    const [subjectsList]: any = await conn.query(sqlSubjects, [roundId]);
+      const [subjectsList]: any = await conn.query(sqlSubjects, [roundId]);
 
-    const sqlStudents = `
+      const sqlStudents = `
       SELECT 
         bs.std_id,
         SUM(CASE WHEN bs.max_score < bs.passing_score THEN 1 ELSE 0 END) AS failed_subjects_count,
@@ -270,91 +332,124 @@ dashboard.get('/:round_id', async (req: Request, res: Response): Promise<any> =>
       ) bs
       GROUP BY bs.std_id
     `;
-    const [studentsData]: any = await conn.query(sqlStudents, [roundId]);
+      const [studentsData]: any = await conn.query(sqlStudents, [roundId]);
 
-    // คำนวณ Summary และ Histogram 
-    let passedAll = 0, failedSome = 0, totalPercent = 0, maxScore = 0, minScore = 100;
-    const distribution = Array(10).fill(0);
+      // คำนวณ Summary และ Histogram
+      let passedAll = 0,
+        failedSome = 0,
+        totalPercent = 0,
+        maxScore = 0,
+        minScore = 100;
+      const distribution = Array(10).fill(0);
 
-    studentsData.forEach((std: any) => {
-      if (Number(std.failed_subjects_count) === 0) passedAll++; else failedSome++;
-      const avgPercent = Number(std.student_avg_percent) || 0;
-      totalPercent += avgPercent;
-      
-      if (avgPercent > maxScore) maxScore = avgPercent;
-      if (avgPercent < minScore) minScore = avgPercent;
+      studentsData.forEach((std: any) => {
+        if (Number(std.failed_subjects_count) === 0) passedAll++;
+        else failedSome++;
+        const avgPercent = Number(std.student_avg_percent) || 0;
+        totalPercent += avgPercent;
 
-      let bucketIndex = Math.floor(avgPercent / 10);
-      if (bucketIndex >= 10) bucketIndex = 9; 
-      if (bucketIndex < 0) bucketIndex = 0;
-      distribution[bucketIndex]++; 
-    });
+        if (avgPercent > maxScore) maxScore = avgPercent;
+        if (avgPercent < minScore) minScore = avgPercent;
 
-    if (studentsData.length === 0) minScore = 0;
-    const totalStudents = studentsData.length;
-    const avgScore = totalStudents > 0 ? (totalPercent / totalStudents) : 0;
+        let bucketIndex = Math.floor(avgPercent / 10);
+        if (bucketIndex >= 10) bucketIndex = 9;
+        if (bucketIndex < 0) bucketIndex = 0;
+        distribution[bucketIndex]++;
+      });
 
-    const summary = {
-      totalStudents, passedAll, failedSome,
-      avgScore: Number(avgScore.toFixed(1)), maxScore: Number(maxScore.toFixed(1)), minScore: Number(minScore.toFixed(1))  
-    };
+      if (studentsData.length === 0) minScore = 0;
+      const totalStudents = studentsData.length;
+      const avgScore = totalStudents > 0 ? totalPercent / totalStudents : 0;
 
-    const radarLabels = subjectsList.map((s: any) => `${s.code} ${s.name}`);
-    const radarAvgData = subjectsList.map((s: any) => s.percent);
-    const radarCriteriaData = subjectsList.map((s: any) => Number(((s.passCriteria / s.full) * 100).toFixed(1)));
+      const summary = {
+        totalStudents,
+        passedAll,
+        failedSome,
+        avgScore: Number(avgScore.toFixed(1)),
+        maxScore: Number(maxScore.toFixed(1)),
+        minScore: Number(minScore.toFixed(1)),
+      };
 
-    const sortedByPercent = [...subjectsList].sort((a, b) => a.percent - b.percent);
-    const weakest = sortedByPercent.slice(0, 2); 
-    const strongest = sortedByPercent.slice(-2).reverse();
+      const radarLabels = subjectsList.map((s: any) => `${s.code} ${s.name}`);
+      const radarAvgData = subjectsList.map((s: any) => s.percent);
+      const radarCriteriaData = subjectsList.map((s: any) =>
+        Number(((s.passCriteria / s.full) * 100).toFixed(1)),
+      );
 
-    const aiInsights = {
-      weaknesses: weakest.length > 0 ? `วิชา ${weakest.map(w => w.name).join(' และ ')} น่ากังวลที่สุด (เฉลี่ย ${weakest.map(w => w.percent+'%').join(', ')})` : 'ยังไม่มีข้อมูลเพียงพอ',
-      strengths: strongest.length > 0 ? `วิชา ${strongest.map(s => s.name).join(' และ ')} ทำผลงานได้ดีที่สุด` : 'ยังไม่มีข้อมูลเพียงพอ',
-      recommendation: weakest.length > 0 ? `ควรจัดคอร์สติวเข้มด่วนในวิชา "${weakest[0]?.name}" ก่อนเป็นอันดับแรก` : 'ภาพรวมอยู่ในเกณฑ์ปกติ'
-    };
+      const sortedByPercent = [...subjectsList].sort(
+        (a, b) => a.percent - b.percent,
+      );
+      const weakest = sortedByPercent.slice(0, 2);
+      const strongest = sortedByPercent.slice(-2).reverse();
 
-    return res.json({
-      summary, subjectsList, aiInsights, distributionData: distribution,
-      radarData: { labels: radarLabels, avgData: radarAvgData, criteriaData: radarCriteriaData }
-    });
+      const aiInsights = {
+        weaknesses:
+          weakest.length > 0
+            ? `วิชา ${weakest.map((w) => w.name).join(" และ ")} น่ากังวลที่สุด (เฉลี่ย ${weakest.map((w) => w.percent + "%").join(", ")})`
+            : "ยังไม่มีข้อมูลเพียงพอ",
+        strengths:
+          strongest.length > 0
+            ? `วิชา ${strongest.map((s) => s.name).join(" และ ")} ทำผลงานได้ดีที่สุด`
+            : "ยังไม่มีข้อมูลเพียงพอ",
+        recommendation:
+          weakest.length > 0
+            ? `ควรจัดคอร์สติวเข้มด่วนในวิชา "${weakest[0]?.name}" ก่อนเป็นอันดับแรก`
+            : "ภาพรวมอยู่ในเกณฑ์ปกติ",
+      };
 
-  } catch (error) {
-    return res.status(500).json({ message: "Internal Server Error" });
-  }
-});
+      return res.json({
+        summary,
+        subjectsList,
+        aiInsights,
+        distributionData: distribution,
+        radarData: {
+          labels: radarLabels,
+          avgData: radarAvgData,
+          criteriaData: radarCriteriaData,
+        },
+      });
+    } catch (error) {
+      return res.status(500).json({ message: "Internal Server Error" });
+    }
+  },
+);
 
 // =================================================================
 // 🌟 API เช็คว่ารอบการสอบนี้มีข้อมูลผลคะแนนหรือไม่ (length > 0)
 // =================================================================
-dashboard.get('/check-results/:round_id', async (req: Request, res: Response): Promise<any> => {
-  const roundId = req.params.round_id;
+dashboard.get(
+  "/check-results/:round_id",
+  async (req: Request, res: Response): Promise<any> => {
+    const roundId = req.params.round_id;
 
-  try {
-    // ใช้ LIMIT 1 เพื่อลดภาระ Database ถ้าเจอแค่ 1 record ก็แปลว่ามีข้อมูลแล้ว
-    const sql = `
+    try {
+      // ใช้ LIMIT 1 เพื่อลดภาระ Database ถ้าเจอแค่ 1 record ก็แปลว่ามีข้อมูลแล้ว
+      const sql = `
       SELECT * 
       FROM exam_scores 
       WHERE round_id = ? 
       LIMIT 1
     `;
-    const [rows]: any = await conn.query(sql, [roundId]);
+      const [rows]: any = await conn.query(sql, [roundId]);
 
-    return res.json({ hasResults: rows.length });
-
-  } catch (error) {
-    console.error("Check Results Error:", error);
-    return res.status(500).json({ message: "Internal Server Error" });
-  }
-});
+      return res.json({ hasResults: rows.length });
+    } catch (error) {
+      console.error("Check Results Error:", error);
+      return res.status(500).json({ message: "Internal Server Error" });
+    }
+  },
+);
 
 // =================================================================
 // 🌟 5. /student-history/:std_code (ดึงประวัติคะแนนแยกรายวิชาของเด็ก 1 คน)
 // =================================================================
-dashboard.get('/student-history/:std_code', async (req: Request, res: Response): Promise<any> => {
-  const stdCode = req.params.std_code;
+dashboard.get(
+  "/student-history/:std_code",
+  async (req: Request, res: Response): Promise<any> => {
+    const stdCode = req.params.std_code;
 
-  try {
-    const sql = `
+    try {
+      const sql = `
       SELECT 
         s.subject_code,
         s.subject_name,
@@ -372,18 +467,21 @@ dashboard.get('/student-history/:std_code', async (req: Request, res: Response):
       WHERE st.std_code = ? AND r.round_status = 1
       ORDER BY s.subject_code ASC, r.academic_year ASC, r.round_number ASC
     `;
-    
-    const [history]: any = await conn.query(sql, [stdCode]);
-    
-    // ถ้าไม่พบประวัติ
-    if (history.length === 0) {
-      return res.json({ history: [], message: "ไม่พบประวัติการสอบของนิสิตคนนี้" });
+
+      const [history]: any = await conn.query(sql, [stdCode]);
+
+      // ถ้าไม่พบประวัติ
+      if (history.length === 0) {
+        return res.json({
+          history: [],
+          message: "ไม่พบประวัติการสอบของนิสิตคนนี้",
+        });
+      }
+
+      return res.json({ history });
+    } catch (error) {
+      console.error("Fetch Student History Error:", error);
+      return res.status(500).json({ message: "Internal Server Error" });
     }
-
-    return res.json({ history });
-
-  } catch (error) {
-    console.error("Fetch Student History Error:", error);
-    return res.status(500).json({ message: "Internal Server Error" });
-  }
-});
+  },
+);
