@@ -7,12 +7,12 @@ import { ResultSetHeader } from "mysql2";
 
 export const users = Router();
 
-users.get("/", verifyToken, async (req: Request, res: Response) => {
+users.get("/", async (req: Request, res: Response) => {
     const [users] = await conn.query("SELECT * FROM users");
     res.json(users);
 })
 
-users.get("/:id", verifyToken, async (req: Request, res: Response) => {
+users.get("/:id", async (req: Request, res: Response) => {
     const { id } = req.params;
     const [user] = await getUser(Number(id), null);
     if (!user) return res.status(404).json({ message: "User not found" });

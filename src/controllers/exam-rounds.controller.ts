@@ -18,6 +18,7 @@ examRounds.get("/", async (req: Request, res: Response): Promise<void> => {
                 er.round_id, 
                 er.academic_year, 
                 er.round_type,
+                er.round_number,
                 er.round_status, -- 🌟 เพิ่มบรรทัดนี้ เพื่อให้ Angular รู้สถานะเปิด/ปิด
                 COUNT(ec.subject_id) AS subjects_count
             FROM exam_rounds er
@@ -40,15 +41,15 @@ examRounds.get("/", async (req: Request, res: Response): Promise<void> => {
 // 2. สร้างรอบการสอบใหม่ (POST /)
 // ===================================================
 examRounds.post("/", async (req: Request, res: Response): Promise<void> => {
-    const { academic_year, round_type } = req.body;
+    const { academic_year, round_type, round_number } = req.body;
 
     if (!academic_year || !round_type) {
         res.status(400).json({ success: false, message: "กรุณาส่งข้อมูล ปีการศึกษา และ ชื่อรอบการสอบ ให้ครบถ้วน" });
         return;
     }
     try {
-        const sql = `INSERT INTO exam_rounds (academic_year, round_type) VALUES (?, ?)`;
-        const [result] = await conn.query<any>(sql, [academic_year, round_type]);
+        const sql = `INSERT INTO exam_rounds (academic_year, round_type, round_number) VALUES (?, ?, ?)`;
+        const [result] = await conn.query<any>(sql, [academic_year, round_type, round_number]);
 
         res.status(201).json({ 
             success: true, 

@@ -101,8 +101,8 @@ dashboard.get('/license-summary', async (req: Request, res: Response): Promise<a
               FROM exam_scores es
               JOIN exam_criteria c ON es.subject_id = c.subject_id AND es.round_id = c.round_id
               JOIN exam_rounds r ON es.round_id = r.round_id
-              WHERE r.round_status = 1 AND r.round_type IN (3, 4, 5)
-              ${whereClause}
+              WHERE r.round_status = 1 AND r.round_type = 2
+              ${whereClause} 
               GROUP BY es.std_id, es.subject_id, r.academic_year
           ) bs
           GROUP BY bs.academic_year, bs.std_id
