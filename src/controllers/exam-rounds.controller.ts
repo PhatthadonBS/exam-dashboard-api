@@ -19,12 +19,17 @@ examRounds.get("/", async (req: Request, res: Response): Promise<void> => {
                 er.academic_year, 
                 er.round_type,
                 er.round_number,
-                er.round_status, -- 🌟 เพิ่มบรรทัดนี้ เพื่อให้ Angular รู้สถานะเปิด/ปิด
+                er.round_status,
                 COUNT(ec.subject_id) AS subjects_count
             FROM exam_rounds er
             LEFT JOIN exam_criteria ec ON er.round_id = ec.round_id
-            GROUP BY er.round_id, er.academic_year, er.round_type, er.round_status -- 🌟 ต้องเพิ่มที่นี่ด้วย
-            ORDER BY er.academic_year DESC, er.round_type ASC
+            GROUP BY 
+                er.round_id, 
+                er.academic_year, 
+                er.round_type, 
+                er.round_number,
+                er.round_status
+            ORDER BY er.academic_year DESC, er.round_type ASC, er.round_number ASC;
         `;
         const [rows] = await conn.query<any[]>(sql);
 
