@@ -129,23 +129,28 @@ dashboard.get(
 // =================================================================
 // 🌟 2. /students/:round_id (หน้ารายบุคคล - Full Version)
 // =================================================================
-dashboard.get("/students/:round_id", async (req: Request, res: Response): Promise<any> => {
-  const roundId = req.params.round_id;
-  try {
-    // 1. ตรวจสอบประเภทของรอบการสอบ (เช็คจาก ID แรกในชุดข้อมูล)
-    const [roundCheck]: any = await conn.query(
-      "SELECT round_type FROM exam_rounds WHERE FIND_IN_SET(round_id, ?) > 0 LIMIT 1", [roundId]
-    );
+dashboard.get(
+  "/students/:round_id",
+  async (req: Request, res: Response): Promise<any> => {
+    const roundId = req.params.round_id;
+    try {
+      // 1. ตรวจสอบประเภทของรอบการสอบ (เช็คจาก ID แรกในชุดข้อมูล)
+      const [roundCheck]: any = await conn.query(
+        "SELECT round_type FROM exam_rounds WHERE FIND_IN_SET(round_id, ?) > 0 LIMIT 1",
+        [roundId],
+      );
 
-    if (roundCheck.length === 0) {
-      return res.status(404).json({ success: false, message: "ไม่พบข้อมูลรอบการสอบ" });
-    }
+      if (roundCheck.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, message: "ไม่พบข้อมูลรอบการสอบ" });
+      }
 
-    const roundType = roundCheck[0].round_type;
+      const roundType = roundCheck[0].round_type;
 
-    // --- 🌟 กรณีสอบใบประกอบวิชาชีพ (Type 2): ดึงจาก exam_paper_result เท่านั้น ---
-    if (roundType === 2) {
-      const sqlLicenseStudents = `
+      // --- 🌟 กรณีสอบใบประกอบวิชาชีพ (Type 2): ดึงจาก exam_paper_result เท่านั้น ---
+      if (roundType === 2) {
+        const sqlLicenseStudents = `
         SELECT 
           st.std_code AS id, 
           epr.paper_result,
@@ -165,27 +170,27 @@ dashboard.get("/students/:round_id", async (req: Request, res: Response): Promis
         ORDER BY st.std_code ASC
       `;
 
-      const [rows]: any = await conn.query(sqlLicenseStudents, [roundId]);
-      
-      const studentsList = rows.map((std: any) => ({
-        ...std,
-        percent: 0,
-        total: 0,
-        max: 0,
-        scoresArray: []
-      }));
+        const [rows]: any = await conn.query(sqlLicenseStudents, [roundId]);
 
-      return res.json({
-        success: true,
-        studentsList,
-        radarBase: { labels: [], groupAvg: [], criteria: [] } // Type 2 ไม่แสดง Radar Chart รายวิชา
-      });
-    }
+        const studentsList = rows.map((std: any) => ({
+          ...std,
+          percent: 0,
+          total: 0,
+          max: 0,
+          scoresArray: [],
+        }));
 
-    // --- 🌟 กรณีสอบประมวลความรู้ (Type 1): ดึงจาก exam_scores ---
-    
-    // 2. Query ข้อมูลนิสิตและคะแนนดิบ
-    const sqlStudents = `
+        return res.json({
+          success: true,
+          studentsList,
+          radarBase: { labels: [], groupAvg: [], criteria: [] }, // Type 2 ไม่แสดง Radar Chart รายวิชา
+        });
+      }
+
+      // --- 🌟 กรณีสอบประมวลความรู้ (Type 1): ดึงจาก exam_scores ---
+
+      // 2. Query ข้อมูลนิสิตและคะแนนดิบ
+      const sqlStudents = `
       SELECT 
         st.std_code AS id, 
         SUM(bs.max_score) AS total, 
@@ -213,18 +218,18 @@ dashboard.get("/students/:round_id", async (req: Request, res: Response): Promis
       GROUP BY st.std_id, st.std_code
       ORDER BY st.std_code ASC
     `;
-    const [studentsRaw]: any = await conn.query(sqlStudents, [roundId]);
-    
-    const studentsList = studentsRaw.map((std: any) => ({
-      ...std,
-      percent: Number(std.percent),
-      total: Number(std.total),
-      max: Number(std.max),
-      scoresArray: std.scoresStr ? std.scoresStr.split(",").map(Number) : [],
-    }));
+      const [studentsRaw]: any = await conn.query(sqlStudents, [roundId]);
 
-    // 3. Query ข้อมูลค่าเฉลี่ยรายกลุ่ม (สำหรับ Radar Chart พื้นหลัง)
-    const sqlSubjects = `
+      const studentsList = studentsRaw.map((std: any) => ({
+        ...std,
+        percent: Number(std.percent),
+        total: Number(std.total),
+        max: Number(std.max),
+        scoresArray: std.scoresStr ? std.scoresStr.split(",").map(Number) : [],
+      }));
+
+      // 3. Query ข้อมูลค่าเฉลี่ยรายกลุ่ม (สำหรับ Radar Chart พื้นหลัง)
+      const sqlSubjects = `
       SELECT 
         s.subject_code AS code, s.subject_name AS name,
         ROUND(AVG(bs.max_score), 2) AS avg_score, 
@@ -240,23 +245,25 @@ dashboard.get("/students/:round_id", async (req: Request, res: Response): Promis
       GROUP BY s.subject_id
       ORDER BY s.subject_code ASC
     `;
-    const [subjectsRaw]: any = await conn.query(sqlSubjects, [roundId]);
+      const [subjectsRaw]: any = await conn.query(sqlSubjects, [roundId]);
 
-    return res.json({
-      success: true,
-      studentsList,
-      radarBase: {
-        labels: subjectsRaw.map((s: any) => `${s.code} ${s.name}`),
-        groupAvg: subjectsRaw.map((s: any) => Number(s.avg_score)),
-        criteria: subjectsRaw.map((s: any) => Number(s.pass_criteria)),
-      },
-    });
-
-  } catch (error) {
-    console.error("Fetch Individual Students Error:", error);
-    return res.status(500).json({ success: false, message: "Internal Server Error" });
-  }
-});
+      return res.json({
+        success: true,
+        studentsList,
+        radarBase: {
+          labels: subjectsRaw.map((s: any) => `${s.code} ${s.name}`),
+          groupAvg: subjectsRaw.map((s: any) => Number(s.avg_score)),
+          criteria: subjectsRaw.map((s: any) => Number(s.pass_criteria)),
+        },
+      });
+    } catch (error) {
+      console.error("Fetch Individual Students Error:", error);
+      return res
+        .status(500)
+        .json({ success: false, message: "Internal Server Error" });
+    }
+  },
+);
 
 // =================================================================
 // 🌟 3. /subjects/:round_id (หน้าข้อมูลรายวิชา)
@@ -551,34 +558,58 @@ dashboard.get(
 // =================================================================
 // 🌟 5. /student-history/:std_code (ดึงประวัติคะแนนแยกรายวิชาของเด็ก 1 คน)
 // =================================================================
+// =================================================================
+// 🌟 5. /student-history/:std_code (ดึงประวัติคะแนนแยกรายวิชา + ใบประกอบฯ ของเด็ก 1 คน)
+// =================================================================
 dashboard.get(
   "/student-history/:std_code",
   async (req: Request, res: Response): Promise<any> => {
     const stdCode = req.params.std_code;
 
     try {
+      // 🌟 ใช้ UNION ALL เพื่อนำข้อมูลจาก 2 ตาราง (Type 1 และ Type 2) มาต่อกัน
+      // ต้องสร้างคอลัมน์หลอก (NULL) ให้ทั้ง 2 ก้อนมีโครงสร้างตรงกัน
       const sql = `
-      SELECT 
-        s.subject_code,
-        s.subject_name,
-        r.academic_year,
-        r.round_number,
-        r.round_type,
-        es.score,
-        c.full_score,
-        c.passing_score
-      FROM exam_scores es
-      JOIN subjects s ON es.subject_id = s.subject_id
-      JOIN exam_rounds r ON es.round_id = r.round_id
-      JOIN exam_criteria c ON es.subject_id = c.subject_id AND es.round_id = c.round_id
-      JOIN students st ON es.std_id = st.std_id
-      WHERE st.std_code = ? AND r.round_status = 1
-      ORDER BY s.subject_code ASC, r.academic_year ASC, r.round_number ASC
-    `;
+        SELECT 
+          s.subject_code,
+          s.subject_name,
+          r.academic_year,
+          r.round_number,
+          r.round_type,
+          es.score,
+          c.full_score,
+          c.passing_score,
+          NULL AS paper_result
+        FROM exam_scores es
+        JOIN subjects s ON es.subject_id = s.subject_id
+        JOIN exam_rounds r ON es.round_id = r.round_id
+        JOIN exam_criteria c ON es.subject_id = c.subject_id AND es.round_id = c.round_id
+        JOIN students st ON es.std_id = st.std_id
+        WHERE st.std_code = ? AND r.round_status = 1
+        
+        UNION ALL
+        
+        SELECT 
+          NULL AS subject_code,
+          NULL AS subject_name,
+          r.academic_year,
+          r.round_number,
+          r.round_type,
+          NULL AS score,
+          NULL AS full_score,
+          NULL AS passing_score,
+          epr.paper_result
+        FROM exam_paper_result epr
+        JOIN exam_rounds r ON epr.round_id = r.round_id
+        JOIN students st ON epr.std_id = st.std_id
+        WHERE st.std_code = ? AND r.round_status = 1
+        
+        ORDER BY round_type ASC, academic_year ASC, round_number ASC
+      `;
 
-      const [history]: any = await conn.query(sql, [stdCode]);
+      // 🌟 ส่ง stdCode ไป 2 ครั้ง เพราะมีเครื่องหมาย ? 2 จุดใน SQL
+      const [history]: any = await conn.query(sql, [stdCode, stdCode]);
 
-      // ถ้าไม่พบประวัติ
       if (history.length === 0) {
         return res.json({
           history: [],
