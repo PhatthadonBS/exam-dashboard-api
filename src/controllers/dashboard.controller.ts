@@ -68,56 +68,42 @@ dashboard.get(
 // =================================================================
 // 🌟 API ดึงข้อมูลสรุป "ใบประกอบวิชาชีพ" (แยกตามปี)
 // =================================================================
-dashboard.get('/license-summary', async (req: Request, res: Response): Promise<any> => {
-  const { start, end } = req.query;
+dashboard.get(
+  "/license-summary",
+  async (req: Request, res: Response): Promise<any> => {
+    const { start, end } = req.query;
 
-  try {
-    let whereClause = ``; 
-    let params: any[] = [];
+    try {
+      let whereClause = ``;
+      let params: any[] = [];
 
-    if (start && end) {
-      whereClause = ` AND r.academic_year BETWEEN ? AND ?`;
-      params.push(start, end);
-    }
+      if (start && end) {
+        whereClause = ` AND r.academic_year BETWEEN ? AND ?`;
+        params.push(start, end);
+      }
 
-    // 🌟 นำ SQL ตัวเต็มมาใส่แทนที่ของเดิม
-    const sql = `
+      // 🌟 เปลี่ยนมาใช้ exam_paper_result ตามเงื่อนไข (Type 2)
+      const sql = `
       SELECT 
-          student_stats.academic_year,
-          SUM(CASE WHEN student_stats.failed_subjects_count = 0 THEN 1 ELSE 0 END) AS pass_count,
-          SUM(CASE WHEN student_stats.failed_subjects_count > 0 THEN 1 ELSE 0 END) AS fail_count
-      FROM (
-          SELECT 
-              bs.academic_year,
-              bs.std_id,
-              SUM(CASE WHEN bs.max_score < bs.passing_score THEN 1 ELSE 0 END) AS failed_subjects_count
-          FROM (
-              SELECT 
-                  es.std_id, 
-                  es.subject_id, 
-                  r.academic_year, 
-                  MAX(es.score) AS max_score, 
-                  MAX(c.passing_score) AS passing_score
-              FROM exam_scores es
-              JOIN exam_criteria c ON es.subject_id = c.subject_id AND es.round_id = c.round_id
-              JOIN exam_rounds r ON es.round_id = r.round_id
-              WHERE r.round_status = 1 AND r.round_type = 2
-              ${whereClause} 
-              GROUP BY es.std_id, es.subject_id, r.academic_year
-          ) bs
-          GROUP BY bs.academic_year, bs.std_id
-      ) student_stats
-      GROUP BY student_stats.academic_year
-      ORDER BY student_stats.academic_year ASC
+          r.academic_year,
+          SUM(CASE WHEN epr.paper_result = 3 THEN 1 ELSE 0 END) AS pass_count,
+          SUM(CASE WHEN epr.paper_result = 2 THEN 1 ELSE 0 END) AS fail_count
+      FROM exam_paper_result epr
+      JOIN exam_rounds r ON epr.round_id = r.round_id
+      WHERE r.round_status = 1 AND r.round_type = 2
+      ${whereClause} 
+      GROUP BY r.academic_year
+      ORDER BY r.academic_year ASC
     `;
 
-    const [rows]: any = await conn.query(sql, params);
-    return res.json({ licenseData: rows });
-  } catch (error) {
-    console.error("License Summary Error:", error);
-    return res.status(500).json({ message: "Internal Server Error" });
-  }
-});
+      const [rows]: any = await conn.query(sql, params);
+      return res.json({ licenseData: rows });
+    } catch (error) {
+      console.error("License Summary Error:", error);
+      return res.status(500).json({ message: "Internal Server Error" });
+    }
+  },
+);
 
 // =================================================================
 // 🌟 API ดึงปีการศึกษาทั้งหมดที่มีในระบบ (เพื่อเอาไปทำ Dropdown)
@@ -141,21 +127,74 @@ dashboard.get(
 );
 
 // =================================================================
-// 🌟 2. /students/:round_id  (หน้ารายบุคคล)
+// 🌟 2. /students/:round_id (หน้ารายบุคคล - Full Version)
 // =================================================================
-dashboard.get(
-  "/students/:round_id",
-  async (req: Request, res: Response): Promise<any> => {
-    const roundId = req.params.round_id;
-    try {
-      // 🌟 ใช้คะแนน MAX เพื่อให้คนที่สอบผ่านในรอบซ่อม (4, 5) ถือว่าผ่าน
-      const sqlStudents = `
+dashboard.get("/students/:round_id", async (req: Request, res: Response): Promise<any> => {
+  const roundId = req.params.round_id;
+  try {
+    // 1. ตรวจสอบประเภทของรอบการสอบ (เช็คจาก ID แรกในชุดข้อมูล)
+    const [roundCheck]: any = await conn.query(
+      "SELECT round_type FROM exam_rounds WHERE FIND_IN_SET(round_id, ?) > 0 LIMIT 1", [roundId]
+    );
+
+    if (roundCheck.length === 0) {
+      return res.status(404).json({ success: false, message: "ไม่พบข้อมูลรอบการสอบ" });
+    }
+
+    const roundType = roundCheck[0].round_type;
+
+    // --- 🌟 กรณีสอบใบประกอบวิชาชีพ (Type 2): ดึงจาก exam_paper_result เท่านั้น ---
+    if (roundType === 2) {
+      const sqlLicenseStudents = `
+        SELECT 
+          st.std_code AS id, 
+          epr.paper_result,
+          CASE 
+            WHEN epr.paper_result = 3 THEN 'pass' 
+            WHEN epr.paper_result = 2 THEN 'fail' 
+            ELSE 'pending' 
+          END AS status,
+          '-' AS failedSub, 
+          0 AS total, 
+          0 AS max, 
+          0 AS percent,
+          '' AS scoresStr
+        FROM students st
+        JOIN exam_paper_result epr ON st.std_id = epr.std_id
+        WHERE FIND_IN_SET(epr.round_id, ?) > 0
+        ORDER BY st.std_code ASC
+      `;
+
+      const [rows]: any = await conn.query(sqlLicenseStudents, [roundId]);
+      
+      const studentsList = rows.map((std: any) => ({
+        ...std,
+        percent: 0,
+        total: 0,
+        max: 0,
+        scoresArray: []
+      }));
+
+      return res.json({
+        success: true,
+        studentsList,
+        radarBase: { labels: [], groupAvg: [], criteria: [] } // Type 2 ไม่แสดง Radar Chart รายวิชา
+      });
+    }
+
+    // --- 🌟 กรณีสอบประมวลความรู้ (Type 1): ดึงจาก exam_scores ---
+    
+    // 2. Query ข้อมูลนิสิตและคะแนนดิบ
+    const sqlStudents = `
       SELECT 
         st.std_code AS id, 
         SUM(bs.max_score) AS total, 
         SUM(bs.full_score) AS max,
         ROUND((SUM(bs.max_score) / SUM(bs.full_score)) * 100, 2) AS percent,
-        CASE WHEN SUM(CASE WHEN bs.max_score < bs.passing_score THEN 1 ELSE 0 END) > 0 THEN 'fail' ELSE 'pass' END AS status,
+        CASE 
+          WHEN SUM(CASE WHEN bs.max_score < bs.passing_score THEN 1 ELSE 0 END) > 0 THEN 'fail' 
+          ELSE 'pass' 
+        END AS status,
         IFNULL(GROUP_CONCAT(CASE WHEN bs.max_score < bs.passing_score THEN s.subject_code ELSE NULL END ORDER BY s.subject_code ASC SEPARATOR ', '), '-') AS failedSub,
         GROUP_CONCAT(bs.max_score ORDER BY s.subject_code ASC SEPARATOR ',') AS scoresStr
       FROM students st
@@ -167,55 +206,57 @@ dashboard.get(
               MAX(c.passing_score) AS passing_score
           FROM exam_scores es
           JOIN exam_criteria c ON es.subject_id = c.subject_id AND es.round_id = c.round_id
-          JOIN exam_rounds r ON es.round_id = r.round_id
-          -- 🌟 กรองเฉพาะรอบที่เปิดใช้งาน
-          WHERE r.round_status = 1 AND FIND_IN_SET(es.round_id, ?) > 0
+          WHERE FIND_IN_SET(es.round_id, ?) > 0
           GROUP BY es.std_id, es.subject_id
       ) bs ON st.std_id = bs.std_id
       JOIN subjects s ON bs.subject_id = s.subject_id
       GROUP BY st.std_id, st.std_code
+      ORDER BY st.std_code ASC
     `;
-      const [studentsRaw]: any = await conn.query(sqlStudents, [roundId]);
-      const studentsList = studentsRaw.map((std: any) => ({
-        ...std,
-        percent: Number(std.percent),
-        total: Number(std.total),
-        max: Number(std.max),
-        scoresArray: std.scoresStr ? std.scoresStr.split(",").map(Number) : [],
-      }));
+    const [studentsRaw]: any = await conn.query(sqlStudents, [roundId]);
+    
+    const studentsList = studentsRaw.map((std: any) => ({
+      ...std,
+      percent: Number(std.percent),
+      total: Number(std.total),
+      max: Number(std.max),
+      scoresArray: std.scoresStr ? std.scoresStr.split(",").map(Number) : [],
+    }));
 
-      const sqlSubjects = `
+    // 3. Query ข้อมูลค่าเฉลี่ยรายกลุ่ม (สำหรับ Radar Chart พื้นหลัง)
+    const sqlSubjects = `
       SELECT 
         s.subject_code AS code, s.subject_name AS name,
-        ROUND(AVG(bs.max_score), 2) AS avg_score, MAX(bs.passing_score) AS pass_criteria
+        ROUND(AVG(bs.max_score), 2) AS avg_score, 
+        MAX(bs.passing_score) AS pass_criteria
       FROM (
           SELECT es.std_id, es.subject_id, MAX(es.score) AS max_score, MAX(c.passing_score) AS passing_score
           FROM exam_scores es
           JOIN exam_criteria c ON es.subject_id = c.subject_id AND es.round_id = c.round_id
-          JOIN exam_rounds r ON es.round_id = r.round_id
-          -- 🌟 กรองเฉพาะรอบที่เปิดใช้งาน
-          WHERE r.round_status = 1 AND FIND_IN_SET(es.round_id, ?) > 0
+          WHERE FIND_IN_SET(es.round_id, ?) > 0
           GROUP BY es.std_id, es.subject_id
       ) bs
       JOIN subjects s ON bs.subject_id = s.subject_id
       GROUP BY s.subject_id
       ORDER BY s.subject_code ASC
     `;
-      const [subjectsRaw]: any = await conn.query(sqlSubjects, [roundId]);
+    const [subjectsRaw]: any = await conn.query(sqlSubjects, [roundId]);
 
-      return res.json({
-        studentsList,
-        radarBase: {
-          labels: subjectsRaw.map((s: any) => `${s.code} ${s.name}`),
-          groupAvg: subjectsRaw.map((s: any) => Number(s.avg_score)),
-          criteria: subjectsRaw.map((s: any) => Number(s.pass_criteria)),
-        },
-      });
-    } catch (error) {
-      return res.status(500).json({ message: "Internal Server Error" });
-    }
-  },
-);
+    return res.json({
+      success: true,
+      studentsList,
+      radarBase: {
+        labels: subjectsRaw.map((s: any) => `${s.code} ${s.name}`),
+        groupAvg: subjectsRaw.map((s: any) => Number(s.avg_score)),
+        criteria: subjectsRaw.map((s: any) => Number(s.pass_criteria)),
+      },
+    });
+
+  } catch (error) {
+    console.error("Fetch Individual Students Error:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+});
 
 // =================================================================
 // 🌟 3. /subjects/:round_id (หน้าข้อมูลรายวิชา)
@@ -290,92 +331,144 @@ dashboard.get(
 // =================================================================
 // 🌟 4. /:round_id (หน้าภาพรวม Overview)
 // =================================================================
+// =================================================================
+// 🌟 4. /:round_id (หน้าภาพรวม Overview - Full Version)
+// =================================================================
 dashboard.get(
   "/:round_id",
   async (req: Request, res: Response): Promise<any> => {
     const roundId = req.params.round_id;
     try {
+      // 1. ตรวจสอบประเภทของรอบการสอบ
+      const [roundCheck]: any = await conn.query(
+        "SELECT round_type FROM exam_rounds WHERE round_id = ?",
+        [roundId],
+      );
+
+      if (roundCheck.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, message: "ไม่พบรอบการสอบ" });
+      }
+
+      const roundType = roundCheck[0].round_type;
+
+      // --- 🌟 กรณีสอบใบประกอบวิชาชีพ (Type 2): ดึงจาก exam_paper_result เท่านั้น ---
+      if (roundType === 2) {
+        const sqlLicense = `
+        SELECT 
+          COUNT(std_id) AS totalStudents,
+          SUM(CASE WHEN paper_result = 3 THEN 1 ELSE 0 END) AS passedAll,
+          SUM(CASE WHEN paper_result = 2 THEN 1 ELSE 0 END) AS failedSome
+        FROM exam_paper_result 
+        WHERE round_id = ?
+      `;
+        const [rows]: any = await conn.query(sqlLicense, [roundId]);
+
+        return res.json({
+          success: true,
+          summary: {
+            totalStudents: Number(rows[0].totalStudents) || 0,
+            passedAll: Number(rows[0].passedAll) || 0,
+            failedSome: Number(rows[0].failedSome) || 0,
+            avgScore: 0,
+            maxScore: 0,
+            minScore: 0,
+          },
+          subjectsList: [], // Type 2 ไม่เน้นรายละเอียดรายวิชาในหน้า Overview
+          distributionData: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          radarData: { labels: [], avgData: [], criteriaData: [] },
+          aiInsights: {
+            recommendation: "สรุปผลการสอบใบประกอบวิชาชีพรายบุคคลเรียบร้อยแล้ว",
+          },
+        });
+      }
+
+      // --- 🌟 กรณีสอบประมวลความรู้ (Type 1): คำนวณจาก exam_scores และ exam_criteria ---
+
+      // 2. ดึงข้อมูลรายวิชา (สำหรับตารางและ Radar Chart)
       const sqlSubjects = `
       SELECT 
         s.subject_code AS code, s.subject_name AS name,
-        MAX(bs.full_score) AS full, MAX(bs.passing_score) AS passCriteria,
-        ROUND(AVG(bs.max_score), 2) AS avg, ROUND((AVG(bs.max_score) / MAX(bs.full_score)) * 100, 2) AS percent,
-        SUM(CASE WHEN bs.max_score >= bs.passing_score THEN 1 ELSE 0 END) AS pass,
-        SUM(CASE WHEN bs.max_score < bs.passing_score THEN 1 ELSE 0 END) AS fail
+        MAX(c.full_score) AS full, MAX(c.passing_score) AS passCriteria,
+        ROUND(AVG(bs.max_score), 2) AS avg, 
+        ROUND((AVG(bs.max_score) / MAX(c.full_score)) * 100, 2) AS percent,
+        SUM(CASE WHEN bs.max_score >= c.passing_score THEN 1 ELSE 0 END) AS pass,
+        SUM(CASE WHEN bs.max_score < c.passing_score THEN 1 ELSE 0 END) AS fail
       FROM (
-          SELECT es.std_id, es.subject_id, MAX(es.score) AS max_score, MAX(c.full_score) AS full_score, MAX(c.passing_score) AS passing_score
+          SELECT es.std_id, es.subject_id, MAX(es.score) AS max_score
           FROM exam_scores es
-          JOIN exam_criteria c ON es.subject_id = c.subject_id AND es.round_id = c.round_id
-          JOIN exam_rounds r ON es.round_id = r.round_id
-          -- 🌟 กรองเฉพาะรอบที่เปิดใช้งาน
-          WHERE r.round_status = 1 AND FIND_IN_SET(es.round_id, ?) > 0
+          WHERE es.round_id = ?
           GROUP BY es.std_id, es.subject_id
       ) bs
       JOIN subjects s ON bs.subject_id = s.subject_id
+      JOIN exam_criteria c ON bs.subject_id = c.subject_id AND c.round_id = ?
       GROUP BY s.subject_id
     `;
-      const [subjectsList]: any = await conn.query(sqlSubjects, [roundId]);
+      const [subjectsList]: any = await conn.query(sqlSubjects, [
+        roundId,
+        roundId,
+      ]);
 
+      // 3. ดึงข้อมูลนิสิตรายคน (สำหรับ Summary และ Histogram)
       const sqlStudents = `
       SELECT 
         bs.std_id,
-        SUM(CASE WHEN bs.max_score < bs.passing_score THEN 1 ELSE 0 END) AS failed_subjects_count,
-        AVG((bs.max_score / bs.full_score) * 100) AS student_avg_percent
+        SUM(CASE WHEN bs.max_score < c.passing_score THEN 1 ELSE 0 END) AS failed_subjects_count,
+        AVG((bs.max_score / c.full_score) * 100) AS student_avg_percent
       FROM (
-          SELECT es.std_id, es.subject_id, MAX(es.score) AS max_score, MAX(c.full_score) AS full_score, MAX(c.passing_score) AS passing_score
+          SELECT es.std_id, es.subject_id, MAX(es.score) AS max_score
           FROM exam_scores es
-          JOIN exam_criteria c ON es.subject_id = c.subject_id AND es.round_id = c.round_id
-          JOIN exam_rounds r ON es.round_id = r.round_id
-          -- 🌟 กรองเฉพาะรอบที่เปิดใช้งาน
-          WHERE r.round_status = 1 AND FIND_IN_SET(es.round_id, ?) > 0
+          WHERE es.round_id = ?
           GROUP BY es.std_id, es.subject_id
       ) bs
+      JOIN exam_criteria c ON bs.subject_id = c.subject_id AND c.round_id = ?
       GROUP BY bs.std_id
     `;
-      const [studentsData]: any = await conn.query(sqlStudents, [roundId]);
+      const [studentsData]: any = await conn.query(sqlStudents, [
+        roundId,
+        roundId,
+      ]);
 
-      // คำนวณ Summary และ Histogram
+      // 4. ประมวลผล Logic สถิติ
       let passedAll = 0,
         failedSome = 0,
-        totalPercent = 0,
-        maxScore = 0,
+        totalPercent = 0;
+      let maxScore = 0,
         minScore = 100;
       const distribution = Array(10).fill(0);
 
       studentsData.forEach((std: any) => {
-        if (Number(std.failed_subjects_count) === 0) passedAll++;
-        else failedSome++;
+        const failedCount = Number(std.failed_subjects_count);
         const avgPercent = Number(std.student_avg_percent) || 0;
-        totalPercent += avgPercent;
 
+        if (failedCount === 0) passedAll++;
+        else failedSome++;
+
+        totalPercent += avgPercent;
         if (avgPercent > maxScore) maxScore = avgPercent;
         if (avgPercent < minScore) minScore = avgPercent;
 
+        // จัดลงถัง Histogram (0-10, 10-20, ..., 90-100)
         let bucketIndex = Math.floor(avgPercent / 10);
         if (bucketIndex >= 10) bucketIndex = 9;
         if (bucketIndex < 0) bucketIndex = 0;
         distribution[bucketIndex]++;
       });
 
-      if (studentsData.length === 0) minScore = 0;
       const totalStudents = studentsData.length;
-      const avgScore = totalStudents > 0 ? totalPercent / totalStudents : 0;
+      if (totalStudents === 0) minScore = 0;
+      const avgScoreOverall =
+        totalStudents > 0 ? totalPercent / totalStudents : 0;
 
-      const summary = {
-        totalStudents,
-        passedAll,
-        failedSome,
-        avgScore: Number(avgScore.toFixed(1)),
-        maxScore: Number(maxScore.toFixed(1)),
-        minScore: Number(minScore.toFixed(1)),
-      };
-
+      // 5. เตรียมข้อมูล Radar Chart
       const radarLabels = subjectsList.map((s: any) => `${s.code} ${s.name}`);
       const radarAvgData = subjectsList.map((s: any) => s.percent);
       const radarCriteriaData = subjectsList.map((s: any) =>
         Number(((s.passCriteria / s.full) * 100).toFixed(1)),
       );
 
+      // 6. สร้าง AI Insights เบื้องต้น
       const sortedByPercent = [...subjectsList].sort(
         (a, b) => a.percent - b.percent,
       );
@@ -385,31 +478,42 @@ dashboard.get(
       const aiInsights = {
         weaknesses:
           weakest.length > 0
-            ? `วิชา ${weakest.map((w) => w.name).join(" และ ")} น่ากังวลที่สุด (เฉลี่ย ${weakest.map((w) => w.percent + "%").join(", ")})`
-            : "ยังไม่มีข้อมูลเพียงพอ",
+            ? `วิชา ${weakest.map((w) => w.name).join(" และ ")} มีคะแนนเฉลี่ยต่ำสุด`
+            : "ยังไม่มีข้อมูล",
         strengths:
           strongest.length > 0
-            ? `วิชา ${strongest.map((s) => s.name).join(" และ ")} ทำผลงานได้ดีที่สุด`
-            : "ยังไม่มีข้อมูลเพียงพอ",
+            ? `นิสิตส่วนใหญ่ทำผลงานได้ดีในวิชา ${strongest.map((s) => s.name).join(" และ ")}`
+            : "ยังไม่มีข้อมูล",
         recommendation:
           weakest.length > 0
-            ? `ควรจัดคอร์สติวเข้มด่วนในวิชา "${weakest[0]?.name}" ก่อนเป็นอันดับแรก`
-            : "ภาพรวมอยู่ในเกณฑ์ปกติ",
+            ? `ควรให้ความสำคัญกับวิชา ${weakest[0].name} ในการติวรอบถัดไป`
+            : "รักษามาตรฐานการเรียนการสอนในระดับเดิม",
       };
 
       return res.json({
-        summary,
+        success: true,
+        summary: {
+          totalStudents,
+          passedAll,
+          failedSome,
+          avgScore: Number(avgScoreOverall.toFixed(1)),
+          maxScore: Number(maxScore.toFixed(1)),
+          minScore: Number(minScore.toFixed(1)),
+        },
         subjectsList,
-        aiInsights,
         distributionData: distribution,
         radarData: {
           labels: radarLabels,
           avgData: radarAvgData,
           criteriaData: radarCriteriaData,
         },
+        aiInsights,
       });
     } catch (error) {
-      return res.status(500).json({ message: "Internal Server Error" });
+      console.error("Overview Error:", error);
+      return res
+        .status(500)
+        .json({ success: false, message: "Internal Server Error" });
     }
   },
 );
@@ -421,16 +525,20 @@ dashboard.get(
   "/check-results/:round_id",
   async (req: Request, res: Response): Promise<any> => {
     const roundId = req.params.round_id;
-
     try {
-      // ใช้ LIMIT 1 เพื่อลดภาระ Database ถ้าเจอแค่ 1 record ก็แปลว่ามีข้อมูลแล้ว
-      const sql = `
-      SELECT * 
-      FROM exam_scores 
-      WHERE round_id = ? 
-      LIMIT 1
-    `;
-      const [rows]: any = await conn.query(sql, [roundId]);
+      const [round]: any = await conn.query(
+        "SELECT round_type FROM exam_rounds WHERE round_id = ?",
+        [roundId],
+      );
+      if (round.length === 0) return res.json({ hasResults: 0 });
+
+      // แยกตารางเช็คตามประเภท
+      const table =
+        round[0].round_type === 2 ? "exam_paper_result" : "exam_scores";
+      const [rows]: any = await conn.query(
+        `SELECT std_id FROM ${table} WHERE round_id = ? LIMIT 1`,
+        [roundId],
+      );
 
       return res.json({ hasResults: rows.length });
     } catch (error) {
