@@ -68,42 +68,64 @@ dashboard.get(
 // =================================================================
 // 🌟 API ดึงข้อมูลสรุป "ใบประกอบวิชาชีพ" (แยกตามปี)
 // =================================================================
-dashboard.get(
-  "/license-summary",
-  async (req: Request, res: Response): Promise<any> => {
-    const { start, end } = req.query;
+// =================================================================
+// 🌟 API ดึงข้อมูลสรุป "ใบประกอบวิชาชีพ" (แยกตามปี + ยอดรวมคนจริงๆ)
+// =================================================================
+dashboard.get("/license-summary", async (req: Request, res: Response): Promise<any> => {
+  const { start, end } = req.query;
 
-    try {
-      let whereClause = ``;
-      let params: any[] = [];
+  try {
+    let whereClause = ``;
+    let params: any[] = [];
 
-      if (start && end) {
-        whereClause = ` AND r.academic_year BETWEEN ? AND ?`;
-        params.push(start, end);
-      }
-
-      // 🌟 เปลี่ยนมาใช้ exam_paper_result ตามเงื่อนไข (Type 2)
-      const sql = `
-      SELECT 
-          r.academic_year,
-          SUM(CASE WHEN epr.paper_result = 3 THEN 1 ELSE 0 END) AS pass_count,
-          SUM(CASE WHEN epr.paper_result = 2 THEN 1 ELSE 0 END) AS fail_count
-      FROM exam_paper_result epr
-      JOIN exam_rounds r ON epr.round_id = r.round_id
-      WHERE r.round_status = 1 AND r.round_type = 2
-      ${whereClause} 
-      GROUP BY r.academic_year
-      ORDER BY r.academic_year ASC
-    `;
-
-      const [rows]: any = await conn.query(sql, params);
-      return res.json({ licenseData: rows });
-    } catch (error) {
-      console.error("License Summary Error:", error);
-      return res.status(500).json({ message: "Internal Server Error" });
+    if (start && end) {
+      whereClause = ` AND r.academic_year BETWEEN ? AND ?`;
+      params.push(start, end);
     }
-  },
-);
+
+    // 1. ดึงข้อมูลรายปี (นับคนไม่ซ้ำในแต่ละปี โดยยึดผลสอบที่ดีที่สุด)
+    const sqlYearly = `
+      SELECT 
+          year_data.academic_year,
+          SUM(CASE WHEN year_data.best_result = 3 THEN 1 ELSE 0 END) AS pass_count,
+          SUM(CASE WHEN year_data.best_result = 2 THEN 1 ELSE 0 END) AS fail_count
+      FROM (
+          SELECT r.academic_year, epr.std_id, MAX(epr.paper_result) AS best_result
+          FROM exam_paper_result epr
+          JOIN exam_rounds r ON epr.round_id = r.round_id
+          WHERE r.round_status = 1 AND r.round_type = 2 ${whereClause} 
+          GROUP BY r.academic_year, epr.std_id
+      ) year_data
+      GROUP BY year_data.academic_year
+      ORDER BY year_data.academic_year ASC
+    `;
+    const [yearlyRows]: any = await conn.query(sqlYearly, params);
+
+    // 2. ดึงข้อมูลสรุปรวมทั้งหมด (นับคนไม่ซ้ำเลยตลอดช่วงปีที่เลือก)
+    const sqlOverall = `
+      SELECT 
+          SUM(CASE WHEN overall_data.best_result = 3 THEN 1 ELSE 0 END) AS pass_count,
+          SUM(CASE WHEN overall_data.best_result = 2 THEN 1 ELSE 0 END) AS fail_count
+      FROM (
+          SELECT epr.std_id, MAX(epr.paper_result) AS best_result
+          FROM exam_paper_result epr
+          JOIN exam_rounds r ON epr.round_id = r.round_id
+          WHERE r.round_status = 1 AND r.round_type = 2 ${whereClause} 
+          GROUP BY epr.std_id
+      ) overall_data
+    `;
+    // 🌟 ส่ง params ไปอีกรอบสำหรับ Query ตัวที่ 2
+    const [overallRows]: any = await conn.query(sqlOverall, params);
+
+    return res.json({ 
+      licenseData: yearlyRows, 
+      overallSummary: overallRows[0] 
+    });
+  } catch (error) {
+    console.error("License Summary Error:", error);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+});
 
 // =================================================================
 // 🌟 API ดึงปีการศึกษาทั้งหมดที่มีในระบบ (เพื่อเอาไปทำ Dropdown)
@@ -287,7 +309,6 @@ dashboard.get(
           FROM exam_scores es
           JOIN exam_criteria c ON es.subject_id = c.subject_id AND es.round_id = c.round_id
           JOIN exam_rounds r ON es.round_id = r.round_id
-          -- 🌟 กรองเฉพาะรอบที่เปิดใช้งาน
           WHERE r.round_status = 1 AND FIND_IN_SET(es.round_id, ?) > 0
           GROUP BY es.std_id, es.subject_id
       ) bs

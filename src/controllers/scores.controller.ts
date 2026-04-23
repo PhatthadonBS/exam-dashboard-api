@@ -171,7 +171,7 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
              WHERE academic_year = ? AND round_status = 1 
              ORDER BY round_type ASC, round_number ASC`, [year]
         );
-
+        
         if (rounds.length === 0) {
              res.status(200).json({ success: true, rounds: [], data: [] });
              return;
@@ -193,6 +193,7 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
             const [criteria] = await connection.query<any[]>(
                 `SELECT round_id, subject_id, passing_score FROM exam_criteria WHERE round_id IN (?)`, [preRoundIds]
             );
+            
             const criteriaMap: any = {};
             criteria.forEach(c => {
                 if (!criteriaMap[c.round_id]) criteriaMap[c.round_id] = {};
@@ -205,7 +206,7 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
                 JOIN students s ON es.std_id = s.std_id
                 WHERE es.round_id IN (?)
             `, [preRoundIds]);
-
+                
             const preScoresMap: any = {};
             scoresData.forEach(row => {
                 initStudent(row.std_code);
@@ -214,6 +215,7 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
                 preScoresMap[row.std_code][row.round_id][row.subject_id] = Number(row.score);
             });
 
+            
             Object.keys(preScoresMap).forEach(std_code => {
                 preRoundIds.forEach(r_id => {
                     const roundData = preScoresMap[std_code][r_id];
