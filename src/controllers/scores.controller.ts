@@ -21,7 +21,8 @@ scores.post('/import', async (req: Request, res: Response): Promise<void> => {
 
         const [roundInfo] = await connection.query<any[]>('SELECT round_type FROM exam_rounds WHERE round_id = ?', [round_id]);
         const roundType = roundInfo[0]?.round_type;
-        const isLicense = roundType === 2; 
+        // 🌟 FIX: แปลงเป็น Number ก่อนเช็ค ป้องกัน String '2' จาก Database
+        const isLicense = Number(roundType) === 2; 
 
         const [subjects] = await connection.query<any[]>('SELECT subject_id, subject_code FROM subjects');
         const subjectMap = subjects.reduce((acc, row) => {
@@ -109,7 +110,8 @@ scores.get('/:round_id', async (req: Request, res: Response): Promise<void> => {
         const [roundInfo] = await connection.query<any[]>('SELECT round_type FROM exam_rounds WHERE round_id = ?', [round_id]);
         const roundType = roundInfo[0]?.round_type;
 
-        if (roundType === 2) {
+        // 🌟 FIX: แปลงเป็น Number ก่อนเช็ค
+        if (Number(roundType) === 2) {
             const sql = `
                 SELECT st.std_code, epr.paper_result
                 FROM exam_paper_result epr
@@ -162,9 +164,12 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
     const connection = await conn.getConnection();
 
     try {
-        // 🌟 ดึงรอบสอบทั้งหมดของปีนั้น เพื่อแนบส่งกลับไปให้หน้าเว็บวาดตาราง
+        // 🌟 FIX: เพิ่ม AND round_status = 1 เพื่อให้ข้อมูลตรงกับ Dashboard
         const [rounds] = await connection.query<any[]>(
-            `SELECT round_id, round_type, round_number FROM exam_rounds WHERE academic_year = ? ORDER BY round_type ASC, round_number ASC`, [year]
+            `SELECT round_id, round_type, round_number 
+             FROM exam_rounds 
+             WHERE academic_year = ? AND round_status = 1 
+             ORDER BY round_type ASC, round_number ASC`, [year]
         );
 
         if (rounds.length === 0) {
@@ -172,8 +177,9 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
              return;
         }
 
-        const preRoundIds = rounds.filter(r => r.round_type === 1).map(r => r.round_id);
-        const licRoundIds = rounds.filter(r => r.round_type === 2).map(r => r.round_id);
+        // 🌟 FIX: แปลง r.round_type เป็น Number ก่อนเช็ค
+        const preRoundIds = rounds.filter(r => Number(r.round_type) === 1).map(r => r.round_id);
+        const licRoundIds = rounds.filter(r => Number(r.round_type) === 2).map(r => r.round_id);
 
         const studentMap: any = {};
         const initStudent = (std_code: string) => {
@@ -182,7 +188,7 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
             }
         };
 
-        // 📝 1. ประมวลผลความรู้ 
+        // 📝 1. ประมวลผลความรู้ (Type 1)
         if (preRoundIds.length > 0) {
             const [criteria] = await connection.query<any[]>(
                 `SELECT round_id, subject_id, passing_score FROM exam_criteria WHERE round_id IN (?)`, [preRoundIds]
@@ -224,7 +230,6 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
                             if (actualScore < passScore) failCount++;
                         });
 
-                        // 🌟 ใช้ r_id เป็น Key เลย ไม่ต้องแปลงแล้ว
                         if (failCount === 0 && subjectCount > 0) {
                             studentMap[std_code].rounds[r_id] = { status: 'pass', detail: `ผ่านครบ ${subjectCount} วิชา` };
                         } else {
@@ -235,7 +240,7 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
             });
         }
 
-        // 🎓 2. ใบประกอบวิชาชีพ 
+        // 🎓 2. ใบประกอบวิชาชีพ (Type 2)
         if (licRoundIds.length > 0) {
             const [licData] = await connection.query<any[]>(`
                 SELECT s.std_code, epr.round_id, epr.paper_result
@@ -250,23 +255,24 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
                 let status = 'none';
                 let detail = '';
                 
-                if (row.paper_result === 3) {
+                // 🌟 FIX: แปลง paper_result เป็น Number ก่อนเช็ค
+                const pr = Number(row.paper_result);
+                
+                if (pr === 3) {
                     status = 'pass';
                     detail = 'ผ่าน';
-                } else if (row.paper_result === 2) {
+                } else if (pr === 2) {
                     status = 'fail';
                     detail = 'ไม่ผ่าน';
-                } else if (row.paper_result === 1) {
+                } else if (pr === 1) {
                     status = 'pending';
                     detail = 'รอดำเนินการ';
                 }
                 
-                // 🌟 ใช้ round_id เป็น Key เลย
                 studentMap[row.std_code].rounds[row.round_id] = { status, detail };
             });
         }
 
-        // 🌟 ส่งตัวแปร rounds (รายชื่อคอลัมน์) กลับไปให้หน้าเว็บด้วย!
         res.status(200).json({ success: true, rounds: rounds, data: Object.values(studentMap) });
 
     } catch (error) {
