@@ -19,19 +19,16 @@ scores.post('/import', async (req: Request, res: Response): Promise<void> => {
     try {
         await connection.beginTransaction();
 
-        // 🌟 แก้ไข: ดึง round_type และเช็คว่าเป็นใบประกอบฯ คือ type = 2
         const [roundInfo] = await connection.query<any[]>('SELECT round_type FROM exam_rounds WHERE round_id = ?', [round_id]);
         const roundType = roundInfo[0]?.round_type;
         const isLicense = roundType === 2; 
 
-        // 2. ดึงวิชามาทำ Map เพื่อแปลง Code เป็น ID
         const [subjects] = await connection.query<any[]>('SELECT subject_id, subject_code FROM subjects');
         const subjectMap = subjects.reduce((acc, row) => {
             acc[row.subject_code] = row.subject_id;
             return acc;
         }, {} as Record<string, number>);
 
-        // 3. ดึงนักศึกษาที่มีอยู่แล้วมาทำ Map
         const [students] = await connection.query<any[]>('SELECT std_id, std_code FROM students');
         const studentMap = students.reduce((acc, row) => {
             acc[row.std_code] = row.std_id;
@@ -40,7 +37,6 @@ scores.post('/import', async (req: Request, res: Response): Promise<void> => {
 
         const valuesToInsert: any[][] = [];
 
-        // 4. วนลูปเตรียมข้อมูล
         for (const student of scores_data) {
             let std_id = studentMap[student.std_code];
 
@@ -53,13 +49,11 @@ scores.post('/import', async (req: Request, res: Response): Promise<void> => {
             }
 
             if (isLicense) {
-                // 🎓 โหมดใบประกอบวิชาชีพ 
                 const paper_result = student.license_result; 
                 if (paper_result !== null && paper_result !== undefined) {
                     valuesToInsert.push([std_id, round_id, paper_result]);
                 }
             } else {
-                // 📝 โหมดประมวลผลความรู้ 
                 for (const sub of student.subjects) {
                     const subject_id = subjectMap[sub.subject_code];
                     if (subject_id && sub.score !== null && sub.score !== undefined) {
@@ -74,7 +68,6 @@ scores.post('/import', async (req: Request, res: Response): Promise<void> => {
              return;
         }
 
-        // 5. บันทึกข้อมูล
         if (isLicense) {
             const sql = `
                 INSERT INTO exam_paper_result (std_id, round_id, paper_result) 
@@ -116,7 +109,6 @@ scores.get('/:round_id', async (req: Request, res: Response): Promise<void> => {
         const [roundInfo] = await connection.query<any[]>('SELECT round_type FROM exam_rounds WHERE round_id = ?', [round_id]);
         const roundType = roundInfo[0]?.round_type;
 
-        // 🌟 แก้ไข: ใบประกอบฯ คือ type = 2
         if (roundType === 2) {
             const sql = `
                 SELECT st.std_code, epr.paper_result
@@ -170,16 +162,16 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
     const connection = await conn.getConnection();
 
     try {
+        // 🌟 ดึงรอบสอบทั้งหมดของปีนั้น เพื่อแนบส่งกลับไปให้หน้าเว็บวาดตาราง
         const [rounds] = await connection.query<any[]>(
-            `SELECT round_id, round_type FROM exam_rounds WHERE academic_year = ? ORDER BY round_type ASC`, [year]
+            `SELECT round_id, round_type, round_number FROM exam_rounds WHERE academic_year = ? ORDER BY round_type ASC, round_number ASC`, [year]
         );
 
         if (rounds.length === 0) {
-             res.status(200).json({ success: true, data: [] });
+             res.status(200).json({ success: true, rounds: [], data: [] });
              return;
         }
 
-        // 🌟 แก้ไข: type 1 = ประมวลผล, type 2 = ใบประกอบฯ
         const preRoundIds = rounds.filter(r => r.round_type === 1).map(r => r.round_id);
         const licRoundIds = rounds.filter(r => r.round_type === 2).map(r => r.round_id);
 
@@ -218,7 +210,6 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
 
             Object.keys(preScoresMap).forEach(std_code => {
                 preRoundIds.forEach(r_id => {
-                    const r_type = rounds.find(r => r.round_id === r_id).round_type;
                     const roundData = preScoresMap[std_code][r_id];
                     
                     if (roundData) {
@@ -233,10 +224,11 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
                             if (actualScore < passScore) failCount++;
                         });
 
+                        // 🌟 ใช้ r_id เป็น Key เลย ไม่ต้องแปลงแล้ว
                         if (failCount === 0 && subjectCount > 0) {
-                            studentMap[std_code].rounds[r_type] = { status: 'pass', detail: `ผ่านครบ ${subjectCount} วิชา` };
+                            studentMap[std_code].rounds[r_id] = { status: 'pass', detail: `ผ่านครบ ${subjectCount} วิชา` };
                         } else {
-                            studentMap[std_code].rounds[r_type] = { status: 'fail', detail: `ตก ${failCount} วิชา` };
+                            studentMap[std_code].rounds[r_id] = { status: 'fail', detail: `ตก ${failCount} วิชา` };
                         }
                     }
                 });
@@ -254,12 +246,10 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
 
             licData.forEach(row => {
                 initStudent(row.std_code);
-                const r_type = rounds.find(r => r.round_id === row.round_id).round_type;
                 
                 let status = 'none';
                 let detail = '';
                 
-                // 🌟 แก้ไข: 3 = ผ่าน, 2 = ไม่ผ่าน, 1 = รอดำเนินการ
                 if (row.paper_result === 3) {
                     status = 'pass';
                     detail = 'ผ่าน';
@@ -271,11 +261,13 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
                     detail = 'รอดำเนินการ';
                 }
                 
-                studentMap[row.std_code].rounds[r_type] = { status, detail };
+                // 🌟 ใช้ round_id เป็น Key เลย
+                studentMap[row.std_code].rounds[row.round_id] = { status, detail };
             });
         }
 
-        res.status(200).json({ success: true, data: Object.values(studentMap) });
+        // 🌟 ส่งตัวแปร rounds (รายชื่อคอลัมน์) กลับไปให้หน้าเว็บด้วย!
+        res.status(200).json({ success: true, rounds: rounds, data: Object.values(studentMap) });
 
     } catch (error) {
         console.error("Error fetching matrix summary:", error);
