@@ -19,10 +19,10 @@ scores.post('/import', async (req: Request, res: Response): Promise<void> => {
     try {
         await connection.beginTransaction();
 
-        // 1. เช็คว่าเป็นสอบประมวลผล หรือ สอบใบประกอบวิชาชีพ
+        // 🌟 แก้ไข: ดึง round_type และเช็คว่าเป็นใบประกอบฯ คือ type = 2
         const [roundInfo] = await connection.query<any[]>('SELECT round_type FROM exam_rounds WHERE round_id = ?', [round_id]);
         const roundType = roundInfo[0]?.round_type;
-        const isLicense = roundType >= 3;
+        const isLicense = roundType === 2; 
 
         // 2. ดึงวิชามาทำ Map เพื่อแปลง Code เป็น ID
         const [subjects] = await connection.query<any[]>('SELECT subject_id, subject_code FROM subjects');
@@ -54,13 +54,12 @@ scores.post('/import', async (req: Request, res: Response): Promise<void> => {
 
             if (isLicense) {
                 // 🎓 โหมดใบประกอบวิชาชีพ 
-                // 🌟 รับค่า 1(รอ), 2(ผ่าน), 3(ไม่ผ่าน) มาแล้วโยนเข้า Database ตรงๆ เลย
                 const paper_result = student.license_result; 
                 if (paper_result !== null && paper_result !== undefined) {
                     valuesToInsert.push([std_id, round_id, paper_result]);
                 }
             } else {
-                // 📝 โหมดประมวลผลความรู้ (เหมือนเดิม)
+                // 📝 โหมดประมวลผลความรู้ 
                 for (const sub of student.subjects) {
                     const subject_id = subjectMap[sub.subject_code];
                     if (subject_id && sub.score !== null && sub.score !== undefined) {
@@ -75,7 +74,7 @@ scores.post('/import', async (req: Request, res: Response): Promise<void> => {
              return;
         }
 
-        // 5. บันทึกข้อมูลรวดเดียว
+        // 5. บันทึกข้อมูล
         if (isLicense) {
             const sql = `
                 INSERT INTO exam_paper_result (std_id, round_id, paper_result) 
@@ -117,8 +116,8 @@ scores.get('/:round_id', async (req: Request, res: Response): Promise<void> => {
         const [roundInfo] = await connection.query<any[]>('SELECT round_type FROM exam_rounds WHERE round_id = ?', [round_id]);
         const roundType = roundInfo[0]?.round_type;
 
-        if (roundType >= 3) {
-            // 🎓 ดึงข้อมูลใบประกอบ 
+        // 🌟 แก้ไข: ใบประกอบฯ คือ type = 2
+        if (roundType === 2) {
             const sql = `
                 SELECT st.std_code, epr.paper_result
                 FROM exam_paper_result epr
@@ -127,7 +126,6 @@ scores.get('/:round_id', async (req: Request, res: Response): Promise<void> => {
             `;
             const [rows] = await connection.query<any[]>(sql, [round_id]);
 
-            // 🌟 ไม่ต้องแปลงค่าแล้ว ส่ง 1, 2, 3 กลับไปให้ Frontend เลย
             const result = rows.map(r => ({
                 std_code: r.std_code,
                 paper_result: r.paper_result 
@@ -136,7 +134,6 @@ scores.get('/:round_id', async (req: Request, res: Response): Promise<void> => {
             res.status(200).json({ success: true, data: result });
 
         } else {
-            // 📝 ดึงข้อมูลประมวลผล (เหมือนเดิม)
             const sql = `
                 SELECT st.std_code, su.subject_code, es.score
                 FROM exam_scores es
@@ -182,8 +179,9 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
              return;
         }
 
-        const preRoundIds = rounds.filter(r => r.round_type <= 2).map(r => r.round_id);
-        const licRoundIds = rounds.filter(r => r.round_type >= 3).map(r => r.round_id);
+        // 🌟 แก้ไข: type 1 = ประมวลผล, type 2 = ใบประกอบฯ
+        const preRoundIds = rounds.filter(r => r.round_type === 1).map(r => r.round_id);
+        const licRoundIds = rounds.filter(r => r.round_type === 2).map(r => r.round_id);
 
         const studentMap: any = {};
         const initStudent = (std_code: string) => {
@@ -192,7 +190,7 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
             }
         };
 
-        // 📝 1. ประมวลผลความรู้ (เหมือนเดิม)
+        // 📝 1. ประมวลผลความรู้ 
         if (preRoundIds.length > 0) {
             const [criteria] = await connection.query<any[]>(
                 `SELECT round_id, subject_id, passing_score FROM exam_criteria WHERE round_id IN (?)`, [preRoundIds]
@@ -245,7 +243,7 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
             });
         }
 
-        // 🎓 2. ใบประกอบวิชาชีพ (อัปเดตใหม่)
+        // 🎓 2. ใบประกอบวิชาชีพ 
         if (licRoundIds.length > 0) {
             const [licData] = await connection.query<any[]>(`
                 SELECT s.std_code, epr.round_id, epr.paper_result
@@ -261,11 +259,11 @@ scores.get('/summary/:year', async (req: Request, res: Response): Promise<void> 
                 let status = 'none';
                 let detail = '';
                 
-                // 🌟 ดักค่า 1(รอผล), 2(ผ่าน), 3(ตก) จาก Database
-                if (row.paper_result === 2) {
+                // 🌟 แก้ไข: 3 = ผ่าน, 2 = ไม่ผ่าน, 1 = รอดำเนินการ
+                if (row.paper_result === 3) {
                     status = 'pass';
                     detail = 'ผ่าน';
-                } else if (row.paper_result === 3) {
+                } else if (row.paper_result === 2) {
                     status = 'fail';
                     detail = 'ไม่ผ่าน';
                 } else if (row.paper_result === 1) {
